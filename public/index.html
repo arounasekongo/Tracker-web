@@ -1,0 +1,140 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Portefeuille Demo</title>
+    <style>
+        * { box-sizing: border-box; }
+        body { margin: 0; font-family: Inter, Arial, sans-serif; color: #12323a; background: #eefbfc; }
+        button, input { font: inherit; }
+        button:focus-visible, input:focus-visible { outline: 3px solid #f2c94c; outline-offset: 2px; }
+        header { height: 64px; padding: 0 max(20px, 5vw); display: flex; align-items: center; justify-content: space-between; background: #fff; border-bottom: 1px solid #ccecef; }
+        .brand { font-size: 25px; font-weight: 800; color: #17202a; }
+        .brand span { color: #00a7bf; }
+        .secure { color: #49616c; font-size: 14px; }
+        main { max-width: 980px; margin: 0 auto; padding: 40px 20px 64px; }
+        .intro { display: grid; grid-template-columns: 1.2fr .8fr; gap: 36px; align-items: center; margin-bottom: 36px; }
+        h1 { font-size: clamp(32px, 5vw, 52px); line-height: 1.08; margin: 0 0 16px; letter-spacing: 0; }
+        .intro p { color: #49616c; line-height: 1.65; max-width: 600px; }
+        .account { background: #047f91; color: #fff; padding: 24px; border-radius: 8px; border-top: 6px solid #ffd84d; }
+        .account small { color: #d8f7fa; }
+        .account strong { display: block; margin-top: 8px; font-size: 30px; }
+        .workspace { background: #fff; border: 1px solid #dfe4e8; border-radius: 8px; padding: 28px; }
+        .workspace h2 { margin: 0 0 8px; font-size: 22px; }
+        .workspace p { color: #49616c; line-height: 1.55; }
+        .notice { padding: 14px 16px; border-left: 4px solid #f2c94c; background: #fff9e8; margin: 20px 0; font-size: 14px; }
+        .primary, .secondary, .danger { min-height: 44px; border: 0; border-radius: 6px; padding: 11px 18px; font-weight: 700; cursor: pointer; }
+        .primary { color: #fff; background: #047f91; }
+        .primary:hover { background: #036979; }
+        .secondary { color: #17202a; background: #e8edf0; }
+        .danger { color: #fff; background: #b42318; }
+        button:disabled { opacity: .5; cursor: not-allowed; }
+        #verifyStatus { display: none; margin-top: 16px; padding: 12px; border-radius: 6px; }
+        #verifyStatus.success { display: block; color: #116149; background: #e5f6ef; }
+        #verifyStatus.error { display: block; color: #8f1d16; background: #fdebea; }
+        #verifyStatus.info { display: block; color: #22577a; background: #eaf4fb; }
+        .history { margin-top: 28px; border-top: 1px solid #dfe4e8; padding-top: 22px; }
+        .history h3 { font-size: 16px; margin: 0 0 12px; }
+        .history-row { display: flex; justify-content: space-between; gap: 16px; padding: 10px 0; border-bottom: 1px solid #edf0f2; font-size: 14px; }
+        .demo-banner { background: #ffd84d; color: #3d3500; text-align: center; padding: 10px 20px; font-weight: 800; border-bottom: 1px solid #e5bd24; }
+        .wallet-panel { background: #00a7bf; color: #fff; border-radius: 8px; padding: 28px; margin-bottom: 28px; border-top: 6px solid #ffd84d; box-shadow: 0 16px 36px rgba(3, 105, 121, .16); }
+        .wallet-head { display: flex; justify-content: space-between; align-items: flex-start; gap: 20px; }
+        .wallet-balance small { color: #e5fbfd; }
+        .wallet-balance strong { display: block; font-size: 38px; margin-top: 6px; }
+        .wallet-actions { display: flex; gap: 10px; flex-wrap: wrap; }
+        .wallet-actions .secondary { background: #ffd84d; color: #3d3500; }
+        .wallet-history { margin-top: 22px; border-top: 1px solid #79dce8; padding-top: 16px; }
+        .wallet-row { display: flex; justify-content: space-between; gap: 16px; padding: 9px 0; border-bottom: 1px solid #79dce8; font-size: 14px; }
+        .wallet-row .credit { color: #fff5b8; }
+        .wallet-row .debit { color: #ffe0de; }
+        .wallet-meta { display: block; margin-top: 3px; color: #dff9fc; font-size: 12px; }
+        .field { display: grid; gap: 6px; margin: 14px 0; }
+        .field input { min-height: 44px; border: 1px solid #b8c5cc; border-radius: 6px; padding: 10px 12px; width: 100%; }
+        #walletError { margin: 12px 0; padding: 10px; color: #8f1d16; background: #fdebea; border-radius: 6px; }
+        .wallet-location-status { margin: 14px 0; padding: 11px 13px; border-radius: 6px; color: #22577a; background: #eaf4fb; font-size: 14px; line-height: 1.45; }
+        .wallet-location-status.success { color: #116149; background: #e5f6ef; }
+        .wallet-location-status.error { color: #8f1d16; background: #fdebea; }
+        .muted { color: #637983; }
+        dialog { border: 0; border-radius: 8px; padding: 0; width: min(680px, calc(100% - 24px)); max-height: 92vh; box-shadow: 0 24px 70px rgba(0,0,0,.3); }
+        dialog::backdrop { background: rgba(12, 20, 25, .78); }
+        .modal { padding: 24px; }
+        .modal-head { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+        .modal-head h2 { margin: 0; font-size: 22px; }
+        .icon-button { width: 40px; height: 40px; border: 0; background: #edf0f2; border-radius: 50%; font-size: 24px; cursor: pointer; }
+        .video-wrap { width: 100%; aspect-ratio: 4/3; background: #10181c; margin: 18px 0; display: grid; place-items: center; overflow: hidden; border-radius: 6px; color: #d7e0e5; text-align: center; }
+        video, #capturedPhoto { width: 100%; height: 100%; object-fit: cover; display: none; }
+        .consent { display: flex; gap: 10px; align-items: flex-start; color: #344b55; font-size: 14px; line-height: 1.45; }
+        .consent input { width: 18px; height: 18px; flex: none; }
+        .consent + .consent { margin-top: 10px; }
+        .photo-file { display: grid; gap: 6px; margin-top: 14px; color: #344b55; font-size: 14px; }
+        .photo-file input { width: 100%; border: 1px solid #b8c5cc; border-radius: 6px; padding: 9px; background: #fff; }
+        .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
+        .controls button { flex: 1; min-width: 130px; }
+        footer { padding: 24px 20px; text-align: center; color: #637983; font-size: 13px; }
+        @media (max-width: 700px) { .intro { grid-template-columns: 1fr; gap: 20px; } main { padding-top: 28px; } .workspace { padding: 20px; } .history-row, .wallet-row { flex-direction: column; gap: 4px; } .wallet-head { flex-direction: column; } }
+    </style>
+</head>
+<body>
+    <div class="demo-banner">MODE DEMONSTRATION - ARGENT FICTIF - AUCUN PAIEMENT REEL</div>
+    <header><div class="brand">Portefeuille<span>.</span>Demo</div><div class="secure" id="serviceStorage">Verification du service...</div></header>
+    <main>
+        <section class="intro">
+            <div><h1>Mon portefeuille</h1><p>Explorez un portefeuille mobile fictif avec des operations simulees et un controle d'identite local.</p></div>
+            <div class="account"><small>Environnement</small><strong>Demonstration</strong><small>Aucune valeur monetaire reelle</small></div>
+        </section>
+        <section class="wallet-panel" aria-labelledby="walletTitle">
+            <div class="wallet-head">
+                <div class="wallet-balance"><small id="walletTitle">Solde fictif disponible</small><strong id="walletBalance">0 F CFA</strong></div>
+                <div class="wallet-actions"><button class="secondary" id="depositButton" type="button">Simuler un depot</button><button class="secondary" id="transferButton" type="button">Simuler un transfert</button></div>
+            </div>
+            <div class="wallet-history"><strong>Operations simulees</strong><div id="walletHistory">Aucune operation.</div></div>
+        </section>
+        <section class="workspace" aria-labelledby="verifyTitle">
+            <h2 id="verifyTitle">Controle par photo</h2>
+            <p>Prenez une photo nette de face. Selon la configuration du service, elle est conservee en base ou sur le serveur et reste accessible aux administrateurs autorises.</p>
+            <div class="notice">Ne poursuivez que si vous reconnaissez ce service et acceptez ce traitement de donnees.</div>
+            <button class="primary" id="btnVerify" type="button">Commencer la verification</button>
+            <div id="verifyStatus" role="status" aria-live="polite"></div>
+            <div class="history"><h3>Verifications recentes sur cet appareil</h3><div id="historyList" class="muted">Aucune verification effectuee.</div></div>
+        </section>
+    </main>
+    <dialog id="cameraDialog" aria-labelledby="cameraTitle">
+        <div class="modal">
+            <div class="modal-head"><h2 id="cameraTitle">Prendre une photo</h2><button class="icon-button" id="btnClose" type="button" aria-label="Fermer">&times;</button></div>
+            <p class="muted">Commencez par la localisation. La photo est facultative et la camera ne sera demandee que si vous l'autorisez.</p>
+            <div class="video-wrap">
+                <video id="video" autoplay playsinline muted></video>
+                <img id="capturedPhoto" alt="Apercu de la photo capturee">
+                <span id="videoPlaceholder">Camera inactive</span>
+                <canvas id="canvas" hidden></canvas>
+            </div>
+            <label class="consent"><input type="checkbox" id="locationCheck"><span>J'autorise la transmission de ma position geographique et de sa precision.</span></label>
+            <label class="consent"><input type="checkbox" id="consentCheck"><span>J'autorise la prise et le traitement facultatifs de ma photo.</span></label>
+            <label class="photo-file"><span>Camera indisponible ? Prenez ou choisissez une photo</span><input id="photoFile" type="file" accept="image/jpeg,image/png" capture="user"></label>
+            <div class="controls">
+                <button class="primary" id="btnLocation" type="button">Partager ma position</button>
+                <button class="secondary" id="btnDeclineLocation" type="button">Continuer sans position precise</button>
+                <button class="secondary" id="btnStartCamera" type="button" disabled>Demarrer la camera</button>
+                <button class="primary" id="btnCapture" type="button" disabled>Prendre la photo</button>
+                <button class="secondary" id="btnRetake" type="button" hidden>Reprendre</button>
+                <button class="primary" id="btnSend" type="button" hidden>Envoyer</button>
+                <button class="primary" id="btnSendWithoutPhoto" type="button" hidden>Envoyer sans photo</button>
+            </div>
+        </div>
+    </dialog>
+    <dialog id="walletDialog" aria-labelledby="walletDialogTitle">
+        <form class="modal" id="walletForm">
+            <div class="modal-head"><h2 id="walletDialogTitle">Operation simulee</h2><button class="icon-button" id="walletCloseButton" type="button" aria-label="Fermer">&times;</button></div>
+            <p class="notice">Cette operation est fictive. Le navigateur demande maintenant votre autorisation afin d'enregistrer la position de cette ouverture dans l'administration.</p>
+            <div id="walletLocationStatus" class="wallet-location-status" role="status" aria-live="polite">Demande de localisation en cours...</div>
+            <label class="field" id="recipientField" hidden><span>Destinataire fictif</span><input id="walletRecipient" type="text" maxlength="60" autocomplete="off"></label>
+            <label class="field"><span>Montant en F CFA</span><input id="walletAmount" type="number" min="100" step="100" required></label>
+            <div id="walletError" class="status-verify error" role="alert" hidden></div>
+            <button class="primary" id="walletSubmitButton" type="submit" disabled>Confirmer la simulation</button>
+        </form>
+    </dialog>
+    <footer>Portefeuille Demo - Argent fictif, sans affiliation avec un service financier reel</footer>
+    <script src="/client.js" defer></script>
+</body>
+</html>

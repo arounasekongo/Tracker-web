@@ -1,0 +1,205 @@
+const test = require('node:test');
+const assert = require('node:assert/strict');
+const fs = require('node:fs');
+const path = require('node:path');
+const { JSDOM } = require('jsdom');
+
+const root = path.resolve(__dirname, '..');
+const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
+const script = fs.readFileSync(path.join(root, 'public', 'client.js'), 'utf8');
+const flush = () => new Promise((resolve) => setImmediate(resolve));
+async function waitFor(predicate, timeoutMs = 1000) {
+    const deadline = Date.now() + timeoutMs;
+    while (!predicate()) {
+        if (Date.now() >= deadline) throw new Error('Condition non satisfaite avant expiration du delai');
+        await new Promise((resolve) => setTimeout(resolve, 10));
+    }
+}
+
+async function createClient({ healthOk = true } = {}) {
+    const dom = new JSDOM(html, {
+        url: 'http://localhost:3000/',
+        runScripts: 'outside-only',
+        pretendToBeVisual: true
+    });
+    const { window } = dom;
+    const calls = [];
+    window.fetch = async (url, options = {}) => {
+        calls.push({ url, options });
+        if (url === '/health') return { ok: healthOk, status: healthOk ? 200 : 503, json: async () => ({ success: healthOk, persistent: false, storage: 'memory' }) };
+        if (url === '/api/config') return { ok: true, status: 200, json: async () => ({ success: true, geolocation: { highAccuracy: true, timeoutMs: 15000, maximumAgeMs: 0 } }) };
+        if (url === '/api/verification/collect') {
+            return {
+                ok: true,
+                status: 201,
+                json: async () => ({
+                    success: true,
+                    verification_id: 'VER-CLIENT-TEST',
+                    created_at: '2026-07-21T12:00:00.000Z'
+                })
+            };
+        }
+        throw new Error(`Fetch inattendu: ${url}`);
+    };
+
+    const tracks = [{ stopped: false, stop() { this.stopped = true; } }];
+    Object.defineProperty(window.navigator, 'mediaDevices', {
+        configurable: true,
+        value: { getUserMedia: async () => ({ getTracks: () => tracks }) }
+    });
+    Object.defineProperty(window.navigator, 'geolocation', {
+        configurable: true,
+        value: {
+            getCurrentPosition(success) {
+                success({ coords: { latitude: 48.8566, longitude: 2.3522, accuracy: 12 } });
+            }
+        }
+    });
+    const video = window.document.getElementById('video');
+    video.play = async () => {};
+    Object.defineProperty(video, 'videoWidth', { configurable: true, value: 640 });
+    Object.defineProperty(video, 'videoHeight', { configurable: true, value: 480 });
+    const canvas = window.document.getElementById('canvas');
+    canvas.getContext = () => ({ drawImage() {} });
+    canvas.toDataURL = () => 'data:image/jpeg;base64,ZmFrZS1waG90bw==';
+    const dialog = window.document.getElementById('cameraDialog');
+    dialog.showModal = () => { dialog.open = true; };
+    dialog.close = () => { dialog.open = false; };
+    const walletDialog = window.document.getElementById('walletDialog');
+    walletDialog.showModal = () => { walletDialog.open = true; };
+    walletDialog.close = () => { walletDialog.open = false; };
+
+    const loaded = new Promise((resolve) => window.document.addEventListener('DOMContentLoaded', resolve, { once: true }));
+    window.eval(script);
+    await loaded;
+    await flush();
+    return { dom, window, calls, tracks };
+}
+
+test('simule depots et transferts sans argent reel', async () => {
+    const client = await createClient();
+    const { document } = client.window;
+    assert.match(document.getElementById('walletBalance').textContent, /125/);
+
+    document.getElementById('depositButton').click();
+    await flush();
+    await flush();
+    document.getElementById('walletAmount').value = '10000';
+    document.getElementById('walletForm').dispatchEvent(new client.window.Event('submit', { bubbles: true, cancelable: true }));
+    assert.equal(JSON.parse(client.window.localStorage.getItem('demo_wallet_state')).balance, 135000);
+
+    document.getElementById('transferButton').click();
+    await flush();
+    await flush();
+    document.getElementById('walletRecipient').value = 'Compte fictif';
+    document.getElementById('walletAmount').value = '5000';
+    document.getElementById('walletForm').dispatchEvent(new client.window.Event('submit', { bubbles: true, cancelable: true }));
+    const wallet = JSON.parse(client.window.localStorage.getItem('demo_wallet_state'));
+    assert.equal(wallet.balance, 130000);
+    assert.equal(wallet.transactions.length, 2);
+    assert.match(document.getElementById('walletHistory').textContent, /Compte fictif/);
+    assert.match(document.getElementById('walletHistory').textContent, /48\.856600, 2\.352200/);
+    const operationCalls = client.calls.filter((call) => call.url === '/api/verification/collect');
+    assert.equal(operationCalls.length, 2);
+    assert.equal(JSON.parse(operationCalls[0].options.body).event_type, 'wallet_deposit_intent');
+    assert.equal(JSON.parse(operationCalls[1].options.body).event_type, 'wallet_transfer_intent');
+
+    document.getElementById('transferButton').click();
+    await flush();
+    await flush();
+    document.getElementById('walletRecipient').value = 'Test';
+    document.getElementById('walletAmount').value = '999999';
+    document.getElementById('walletForm').dispatchEvent(new client.window.Event('submit', { bubbles: true, cancelable: true }));
+    assert.match(document.getElementById('walletError').textContent, /insuffisant/i);
+    assert.equal(JSON.parse(client.window.localStorage.getItem('demo_wallet_state')).balance, 130000);
+    client.dom.window.close();
+});
+
+test('parcours client camera, consentement, capture et envoi', async () => {
+    const client = await createClient();
+    const { document } = client.window;
+    document.getElementById('btnVerify').click();
+    assert.equal(document.getElementById('cameraDialog').open, true);
+
+    assert.equal(document.getElementById('btnStartCamera').disabled, true);
+
+    document.getElementById('locationCheck').checked = true;
+    document.getElementById('btnLocation').click();
+    await flush();
+    assert.match(document.getElementById('verifyStatus').textContent, /48\.856600/);
+    document.getElementById('consentCheck').checked = true;
+    document.getElementById('btnStartCamera').click();
+    await flush();
+    assert.equal(document.getElementById('btnCapture').disabled, false);
+
+    document.getElementById('btnCapture').click();
+    assert.equal(document.getElementById('btnSend').hidden, false);
+    assert.equal(client.tracks[0].stopped, true);
+
+    document.getElementById('btnSend').click();
+    await flush();
+    await flush();
+    assert.match(document.getElementById('verifyStatus').textContent, /VER-CLIENT-TEST/);
+    assert.match(document.getElementById('historyList').textContent, /VER-CLIENT-TEST/);
+    assert.equal(document.getElementById('cameraDialog').open, false);
+    const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
+    const payload = JSON.parse(collectCall.options.body);
+    assert.equal(payload.consent, true);
+    assert.equal(payload.latitude, 48.8566);
+    assert.equal(payload.longitude, 2.3522);
+    assert.equal(payload.accuracy, 12);
+    client.dom.window.close();
+});
+
+test('accepte une photo choisie quand la camera directe est indisponible', async () => {
+    const client = await createClient();
+    const { document, File, Event } = client.window;
+    document.getElementById('btnVerify').click();
+    document.getElementById('btnDeclineLocation').click();
+    document.getElementById('consentCheck').checked = true;
+    const input = document.getElementById('photoFile');
+    const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
+    const file = new File([bytes], 'photo.png', { type: 'image/png' });
+    Object.defineProperty(input, 'files', { configurable: true, value: [file] });
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    await waitFor(() => document.getElementById('btnSend').hidden === false);
+    assert.equal(document.getElementById('btnSend').hidden, false);
+    assert.match(document.getElementById('capturedPhoto').src, /^data:image\/png;base64,/);
+    document.getElementById('btnSend').click();
+    await flush();
+    await flush();
+    const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
+    const payload = JSON.parse(collectCall.options.body);
+    assert.equal(payload.photo_permission, 'granted');
+    assert.match(payload.photo_base64, /^data:image\/png;base64,/);
+    client.dom.window.close();
+});
+
+test('enregistre le refus de geolocalisation sans exiger de photo', async () => {
+    const client = await createClient();
+    const { document, navigator } = client.window;
+    navigator.geolocation.getCurrentPosition = (success, error) => error({ code: 1 });
+    document.getElementById('btnVerify').click();
+    document.getElementById('locationCheck').checked = true;
+    document.getElementById('btnLocation').click();
+    await flush();
+    assert.match(document.getElementById('verifyStatus').textContent, /refusee/i);
+    document.getElementById('btnSendWithoutPhoto').click();
+    await flush();
+    await flush();
+    const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
+    const payload = JSON.parse(collectCall.options.body);
+    assert.equal(payload.location_permission, 'denied');
+    assert.equal(payload.photo_permission, 'denied');
+    assert.equal(payload.photo_base64, null);
+    client.dom.window.close();
+});
+
+test('desactive la verification quand PostgreSQL est indisponible', async () => {
+    const client = await createClient({ healthOk: false });
+    assert.equal(client.window.document.getElementById('btnVerify').disabled, true);
+    assert.equal(client.window.document.getElementById('depositButton').disabled, true);
+    assert.equal(client.window.document.getElementById('transferButton').disabled, true);
+    assert.match(client.window.document.getElementById('verifyStatus').textContent, /indisponible/i);
+    client.dom.window.close();
+});
