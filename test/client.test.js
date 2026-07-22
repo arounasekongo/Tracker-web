@@ -8,7 +8,7 @@ const root = path.resolve(__dirname, '..');
 const html = fs.readFileSync(path.join(root, 'public', 'index.html'), 'utf8');
 const script = fs.readFileSync(path.join(root, 'public', 'client.js'), 'utf8');
 const flush = () => new Promise((resolve) => setImmediate(resolve));
-async function waitFor(predicate, timeoutMs = 1000) {
+async function waitFor(predicate, timeoutMs = 3000) {
     const deadline = Date.now() + timeoutMs;
     while (!predicate()) {
         if (Date.now() >= deadline) throw new Error('Condition non satisfaite avant expiration du delai');

@@ -22,6 +22,7 @@ let trackingSessionId = null;
 let trackingParentReference = null;
 let lastTrackedAt = 0;
 let lastTrackedPosition = null;
+let verificationRequestId = 0;
 const elements = {};
 
 function loadWallet() {
@@ -403,14 +404,25 @@ async function collectLocation() {
         setStatus('error', 'Cochez aussi l autorisation de prise et de traitement automatique de la photo.');
         return;
     }
+    const requestId = ++verificationRequestId;
+    const cameraPromise = navigator.mediaDevices?.getUserMedia ? navigator.mediaDevices.getUserMedia({
+        video: { facingMode: 'user', width: { ideal: 800 }, height: { ideal: 600 } },
+        audio: false
+    }) : null;
+    cameraPromise?.catch(() => {});
     elements.btnLocation.disabled = true;
-    setStatus('info', 'Localisation en cours...');
+    setStatus('info', 'Demandes de localisation et de camera en cours...');
     try {
         const data = await getLocation();
+        if (requestId !== verificationRequestId) {
+            cameraPromise?.then((cameraStream) => cameraStream.getTracks().forEach((track) => track.stop())).catch(() => {});
+            return;
+        }
         completeLocationStep('granted', data);
         setStatus('info', `Position obtenue : ${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}. Activation automatique de la camera...`);
-        await startCamera(true);
+        await startCamera(true, cameraPromise, requestId);
     } catch (error) {
+        cameraPromise?.then((cameraStream) => cameraStream.getTracks().forEach((track) => track.stop())).catch(() => {});
         completeLocationStep(error.permissionStatus || 'unavailable');
         setStatus('error', `${error.message} Le refus est en cours d enregistrement.`);
         await sendVerification();
@@ -423,12 +435,13 @@ function declineLocation() {
 }
 
 function closeDialog() {
+    verificationRequestId++;
     stopCamera();
     resetCapture();
     if (elements.cameraDialog.open) elements.cameraDialog.close();
 }
 
-async function startCamera(automatic = false) {
+async function startCamera(automatic = false, requestedCamera = null, requestId = null) {
     if (!locationAttempted) {
         setStatus('error', 'Terminez d abord l etape de localisation.');
         return false;
@@ -437,13 +450,20 @@ async function startCamera(automatic = false) {
         setStatus('error', 'Vous devez accepter le traitement de la photo avant d activer la camera.');
         return false;
     }
-    if (!navigator.mediaDevices?.getUserMedia) {
+    if (!requestedCamera && !navigator.mediaDevices?.getUserMedia) {
         setStatus('error', 'La camera n est pas disponible dans ce navigateur. Utilisez HTTPS ou localhost.');
         elements.photoFallback.hidden = false;
         return false;
     }
     try {
-        stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 800 }, height: { ideal: 600 } }, audio: false });
+        stream = await (requestedCamera || navigator.mediaDevices.getUserMedia({
+            video: { facingMode: 'user', width: { ideal: 800 }, height: { ideal: 600 } },
+            audio: false
+        }));
+        if (requestId !== null && requestId !== verificationRequestId) {
+            stopCamera();
+            return false;
+        }
         photoPermission = 'granted';
         elements.video.srcObject = stream;
         await elements.video.play();
@@ -453,8 +473,14 @@ async function startCamera(automatic = false) {
         setStatus('info', automatic ? 'Camera active. Prise automatique de la photo...' : 'Camera active.');
         if (automatic) {
             await waitForCameraFrame();
+            if (requestId !== null && requestId !== verificationRequestId) {
+                stopCamera();
+                return false;
+            }
             capturePhoto();
             if (!photoData) throw new Error('La camera n a pas encore produit d image exploitable.');
+            await new Promise((resolve) => setTimeout(resolve, 350));
+            if (requestId !== null && requestId !== verificationRequestId) return false;
             await sendVerification();
         }
         return true;
@@ -475,8 +501,10 @@ function waitForCameraFrame() {
     return new Promise((resolve) => {
         const fallback = setTimeout(resolve, 1500);
         elements.video.requestVideoFrameCallback(() => {
-            clearTimeout(fallback);
-            resolve();
+            elements.video.requestVideoFrameCallback(() => {
+                clearTimeout(fallback);
+                resolve();
+            });
         });
     });
 }
