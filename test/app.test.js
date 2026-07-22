@@ -117,3 +117,24 @@ test('enregistre le refus d une demande de localisation au clic', async () => {
         assert.equal((await response.json()).status, 'failed');
     });
 });
+
+test('valide les points d une session de suivi', async () => {
+    await withServer(async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/verification/collect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                consent: true,
+                event_type: 'location_tracking_update',
+                location_permission: 'granted',
+                tracking_session_id: 'track-test-1',
+                parent_verification_id: 'VER-PARENT',
+                latitude: 14.71,
+                longitude: -17.46,
+                accuracy: 8
+            })
+        });
+        assert.equal(response.status, 201);
+        assert.equal((await response.json()).status, 'success');
+    });
+});

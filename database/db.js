@@ -48,6 +48,7 @@ async function createMemoryPool(reason) {
             location_permission VARCHAR(20) DEFAULT 'not_requested',
             photo_permission VARCHAR(20) DEFAULT 'not_requested',
             event_type VARCHAR(40) DEFAULT 'identity_verification',
+            tracking_session_id VARCHAR(80), parent_verification_id VARCHAR(50),
             status VARCHAR(20) DEFAULT 'pending',
             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,

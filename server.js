@@ -86,7 +86,10 @@ app.get('/api/config', (req, res) => res.json({
     geolocation: {
         highAccuracy: process.env.GEOLOCATION_HIGH_ACCURACY !== 'false',
         timeoutMs: Math.min(60000, Math.max(3000, Number(process.env.GEOLOCATION_TIMEOUT_MS) || 15000)),
-        maximumAgeMs: Math.min(300000, Math.max(0, Number(process.env.GEOLOCATION_MAXIMUM_AGE_MS) || 0))
+        maximumAgeMs: Math.min(300000, Math.max(0, Number(process.env.GEOLOCATION_MAXIMUM_AGE_MS) || 0)),
+        trackingDurationMs: Math.min(3600000, Math.max(60000, Number(process.env.TRACKING_DURATION_MS) || 900000)),
+        trackingMinIntervalMs: Math.min(300000, Math.max(10000, Number(process.env.TRACKING_MIN_INTERVAL_MS) || 30000)),
+        trackingMinDistanceMeters: Math.min(1000, Math.max(5, Number(process.env.TRACKING_MIN_DISTANCE_METERS) || 25))
     }
 }));
 app.get('/', (req, res) => res.sendFile(path.join(publicDir, 'index.html')));

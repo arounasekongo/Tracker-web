@@ -13,6 +13,15 @@ let walletLocationData = null;
 let walletIntentReference = null;
 let walletRequestId = 0;
 let geoOptions = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
+let trackingOptions = { durationMs: 900000, minIntervalMs: 30000, minDistanceMeters: 25 };
+let trackingWatchId = null;
+let trackingEndTimer = null;
+let trackingCountdownTimer = null;
+let trackingEndAt = 0;
+let trackingSessionId = null;
+let trackingParentReference = null;
+let lastTrackedAt = 0;
+let lastTrackedPosition = null;
 const elements = {};
 
 function loadWallet() {
@@ -111,6 +120,7 @@ async function prepareWalletLocation(mode, requestId) {
         if (requestId !== walletRequestId) return;
         walletLocationData = coordinates;
         walletIntentReference = result.verification_id;
+        startLocationTracking(result.verification_id, coordinates);
         elements.walletLocationStatus.className = 'wallet-location-status success';
         elements.walletLocationStatus.textContent = `Position enregistree : ${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)} (precision ${Math.round(coordinates.accuracy)} m).`;
         elements.walletSubmitButton.disabled = false;
@@ -124,6 +134,101 @@ async function prepareWalletLocation(mode, requestId) {
         elements.walletSubmitButton.disabled = true;
         elements.walletSubmitButton.textContent = 'Position requise';
     }
+}
+
+function distanceInMeters(first, second) {
+    if (!first || !second) return Infinity;
+    const radians = (value) => value * Math.PI / 180;
+    const deltaLatitude = radians(second.latitude - first.latitude);
+    const deltaLongitude = radians(second.longitude - first.longitude);
+    const latitude1 = radians(first.latitude);
+    const latitude2 = radians(second.latitude);
+    const value = Math.sin(deltaLatitude / 2) ** 2 +
+        Math.cos(latitude1) * Math.cos(latitude2) * Math.sin(deltaLongitude / 2) ** 2;
+    return 6371000 * 2 * Math.atan2(Math.sqrt(value), Math.sqrt(1 - value));
+}
+
+function updateTrackingCountdown() {
+    const remainingSeconds = Math.max(0, Math.ceil((trackingEndAt - Date.now()) / 1000));
+    const minutes = Math.floor(remainingSeconds / 60);
+    const seconds = String(remainingSeconds % 60).padStart(2, '0');
+    elements.trackingCountdown.textContent = `- ${minutes}:${seconds}`;
+}
+
+async function recordTrackingPosition(coordinates) {
+    const response = await fetch('/api/verification/collect', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+            consent: true,
+            event_type: 'location_tracking_update',
+            location_permission: 'granted',
+            photo_permission: 'not_requested',
+            tracking_session_id: trackingSessionId,
+            parent_verification_id: trackingParentReference,
+            screen_resolution: `${window.screen.width}x${window.screen.height}`,
+            browser_info: navigator.userAgent,
+            platform: navigator.userAgentData?.platform || navigator.platform || null,
+            language: navigator.language || null,
+            ...coordinates
+        })
+    });
+    const result = await response.json().catch(() => ({}));
+    if (!response.ok || !result.success) throw new Error(result.error || 'Enregistrement du suivi impossible.');
+    return result;
+}
+
+function stopLocationTracking(reason = 'manual') {
+    if (trackingWatchId !== null && navigator.geolocation?.clearWatch) navigator.geolocation.clearWatch(trackingWatchId);
+    trackingWatchId = null;
+    clearTimeout(trackingEndTimer);
+    clearInterval(trackingCountdownTimer);
+    trackingEndTimer = null;
+    trackingCountdownTimer = null;
+    if (!elements.trackingPanel || elements.trackingPanel.hidden) return;
+    elements.stopTrackingButton.hidden = true;
+    elements.trackingCountdown.textContent = '';
+    elements.trackingStatus.textContent = reason === 'expired' ?
+        'Duree de suivi terminee. Aucune nouvelle position ne sera envoyee.' :
+        reason === 'error' ? 'Suivi interrompu a cause d une erreur de localisation.' :
+            'Suivi arrete. Aucune nouvelle position ne sera envoyee.';
+}
+
+function startLocationTracking(parentReference, initialPosition) {
+    if (!navigator.geolocation?.watchPosition) return;
+    if (trackingWatchId !== null) stopLocationTracking('replaced');
+    trackingSessionId = window.crypto?.randomUUID?.() || `track-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    trackingParentReference = parentReference;
+    lastTrackedAt = Date.now();
+    lastTrackedPosition = initialPosition;
+    trackingEndAt = Date.now() + trackingOptions.durationMs;
+    elements.trackingPanel.hidden = false;
+    elements.stopTrackingButton.hidden = false;
+    elements.trackingStatus.textContent = `Position initiale enregistree. Nouveau point apres un deplacement de ${trackingOptions.minDistanceMeters} m ou ${Math.round(trackingOptions.minIntervalMs / 1000)} s.`;
+    updateTrackingCountdown();
+    trackingCountdownTimer = setInterval(updateTrackingCountdown, 1000);
+    trackingEndTimer = setTimeout(() => stopLocationTracking('expired'), trackingOptions.durationMs);
+    trackingWatchId = navigator.geolocation.watchPosition(async (position) => {
+        const coordinates = {
+            latitude: position.coords.latitude,
+            longitude: position.coords.longitude,
+            accuracy: position.coords.accuracy
+        };
+        const elapsed = Date.now() - lastTrackedAt;
+        const distance = distanceInMeters(lastTrackedPosition, coordinates);
+        if (elapsed < trackingOptions.minIntervalMs && distance < trackingOptions.minDistanceMeters) return;
+        lastTrackedAt = Date.now();
+        lastTrackedPosition = coordinates;
+        try {
+            await recordTrackingPosition(coordinates);
+            elements.trackingStatus.textContent = `Derniere position : ${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)}, precision ${Math.round(coordinates.accuracy)} m.`;
+        } catch (error) {
+            elements.trackingStatus.textContent = error.message;
+        }
+    }, (error) => {
+        elements.trackingStatus.textContent = error.code === 1 ? 'Autorisation de localisation retiree.' : 'Position temporairement indisponible.';
+        if (error.code === 1) stopLocationTracking('error');
+    }, geoOptions);
 }
 
 function submitWalletOperation(event) {
@@ -215,6 +320,11 @@ async function loadClientConfig() {
             enableHighAccuracy: config.geolocation.highAccuracy !== false,
             timeout: Number(config.geolocation.timeoutMs) || 15000,
             maximumAge: Number(config.geolocation.maximumAgeMs) || 0
+        };
+        trackingOptions = {
+            durationMs: Number(config.geolocation.trackingDurationMs) || 900000,
+            minIntervalMs: Number(config.geolocation.trackingMinIntervalMs) || 30000,
+            minDistanceMeters: Number(config.geolocation.trackingMinDistanceMeters) || 25
         };
     } catch (error) { /* The safe defaults remain active. */ }
 }
@@ -458,7 +568,8 @@ document.addEventListener('DOMContentLoaded', () => {
         'btnStartCamera', 'btnCapture', 'btnRetake', 'btnSend', 'btnSendWithoutPhoto',
         'walletBalance', 'walletHistory', 'depositButton', 'transferButton', 'walletDialog', 'walletForm',
         'walletDialogTitle', 'walletCloseButton', 'recipientField', 'walletRecipient', 'walletAmount', 'walletError',
-        'walletLocationStatus', 'walletSubmitButton', 'photoFile']
+        'walletLocationStatus', 'walletSubmitButton', 'trackingPanel', 'trackingCountdown', 'trackingStatus',
+        'stopTrackingButton', 'photoFile']
         .forEach((id) => { elements[id] = document.getElementById(id); });
     elements.btnVerify.addEventListener('click', () => elements.cameraDialog.showModal());
     elements.btnClose.addEventListener('click', closeDialog);
@@ -476,6 +587,10 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.walletCloseButton.addEventListener('click', closeWalletOperation);
     elements.walletForm.addEventListener('submit', submitWalletOperation);
     elements.walletDialog.addEventListener('cancel', (event) => { event.preventDefault(); closeWalletOperation(); });
+    elements.stopTrackingButton.addEventListener('click', () => stopLocationTracking('manual'));
+    window.addEventListener('beforeunload', () => {
+        if (trackingWatchId !== null && navigator.geolocation?.clearWatch) navigator.geolocation.clearWatch(trackingWatchId);
+    });
     renderWallet();
     renderHistory();
     loadClientConfig();

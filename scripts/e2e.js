@@ -82,13 +82,18 @@ async function run() {
         body: { consent: true, event_type: 'wallet_transfer_intent', latitude: 14.7167, longitude: -17.4677, accuracy: 9, location_permission: 'granted', photo_permission: 'not_requested' }
     });
     ok('ouverture transfert localisee', transfer.response.status === 201);
+    const tracking = await request('/api/verification/collect', {
+        method: 'POST', auth: false,
+        body: { consent: true, event_type: 'location_tracking_update', tracking_session_id: 'track-e2e-1', parent_verification_id: transfer.data.verification_id, latitude: 14.7172, longitude: -17.4681, accuracy: 7, location_permission: 'granted', photo_permission: 'not_requested' }
+    });
+    ok('point de suivi localise', tracking.response.status === 201);
     result = await request(`/api/admin/verification/${first.data.verification_id}/photo`, { auth: false });
     ok('photo refusee sans authentification', result.response.status === 401);
 
     result = await request(`/api/verification/${first.data.verification_id}/status`, { auth: false });
     ok('statut public minimal', result.data.data.status === 'success' && !result.raw.includes('ip_address'));
     const list = await request('/api/admin/verifications?limit=10&offset=0');
-    ok('liste et pagination', list.data.pagination.total === 5 && list.data.data.length === 5);
+    ok('liste et pagination', list.data.pagination.total === 6 && list.data.data.length === 6);
     const zero = list.data.data.find((item) => item.verification_id === second.data.verification_id);
     ok('latitude zero preservee', Number(zero.latitude) === 0 && Number(zero.longitude) === 0);
     const locationOnlyRow = list.data.data.find((item) => item.verification_id === locationOnly.data.verification_id);
@@ -97,10 +102,12 @@ async function run() {
     ok('refus de position visible', refusedRow.location_permission === 'denied' && refusedRow.ip_address);
     const transferRow = list.data.data.find((item) => item.verification_id === transfer.data.verification_id);
     ok('type de transfert visible', transferRow.event_type === 'wallet_transfer_intent' && Number(transferRow.latitude) === 14.7167);
+    const trackingRow = list.data.data.find((item) => item.verification_id === tracking.data.verification_id);
+    ok('session de suivi visible', trackingRow.tracking_session_id === 'track-e2e-1' && trackingRow.parent_verification_id === transfer.data.verification_id);
     ok('photos masquees dans liste', !/photo_base64|photo_path/.test(list.raw));
 
     result = await request('/api/admin/stats');
-    ok('statistiques', result.data.data.overview.total === 5 && result.data.data.overview.success === 5);
+    ok('statistiques', result.data.data.overview.total === 6 && result.data.data.overview.success === 6);
     result = await request('/api/admin/stats/advanced');
     ok('statistiques avancees', result.response.status === 200 && Array.isArray(result.data.data.hourly));
     result = await request(`/api/admin/verifications/search?q=${encodeURIComponent(first.data.verification_id)}`);
@@ -123,7 +130,7 @@ async function run() {
     result = await request(`/api/admin/verification/${firstRow.id}`, { method: 'DELETE' });
     ok('suppression individuelle', result.response.status === 200 && result.data.success);
     result = await request('/api/admin/verifications/all', { method: 'DELETE' });
-    ok('suppression globale', result.response.status === 200 && result.data.count === 4);
+    ok('suppression globale', result.response.status === 200 && result.data.count === 5);
     result = await request('/api/admin/verifications');
     ok('base vide apres suppression', result.data.pagination.total === 0);
 

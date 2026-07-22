@@ -4,6 +4,8 @@ Application Node.js de portefeuille fictif et de controle d'identite avec interf
 
 La demande GPS est lancee des l'ouverture d'un depot ou d'un transfert simule. Une autorisation accordee est enregistree immediatement et diffusee au tableau admin par Server-Sent Events. Un refus est conserve comme etat sans coordonnees.
 
+Apres autorisation, `watchPosition` maintient un suivi visible et interrompable pendant 15 minutes par defaut, tant que la page reste ouverte. Les points sont espaces selon le temps ou la distance et rattaches a la reference initiale par un identifiant de session.
+
 ## Demarrage local
 
 1. Installez Node.js 20+ et PostgreSQL.

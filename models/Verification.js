@@ -7,13 +7,15 @@ class Verification {
         const query = `INSERT INTO verifications (
             verification_id, ip_address, latitude, longitude, accuracy, user_agent,
             screen_resolution, browser_info, platform, language, photo_path,
-            photo_base64, photo_size, location_permission, photo_permission, event_type, status
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *`;
+            photo_base64, photo_size, location_permission, photo_permission, event_type,
+            tracking_session_id, parent_verification_id, status
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`;
         const values = [verificationId, data.ip_address, data.latitude, data.longitude, data.accuracy,
             data.user_agent, data.screen_resolution, data.browser_info, data.platform, data.language,
             data.photo_path || null, data.photo_base64 || null, data.photo_size || null,
             data.location_permission || 'not_requested', data.photo_permission || 'not_requested',
-            data.event_type || 'identity_verification', data.status || 'pending'];
+            data.event_type || 'identity_verification', data.tracking_session_id || null,
+            data.parent_verification_id || null, data.status || 'pending'];
         return (await pool.query(query, values)).rows[0];
     }
 

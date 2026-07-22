@@ -18,6 +18,8 @@ CREATE TABLE IF NOT EXISTS verifications (
     location_permission VARCHAR(20) DEFAULT 'not_requested',
     photo_permission VARCHAR(20) DEFAULT 'not_requested',
     event_type VARCHAR(40) DEFAULT 'identity_verification',
+    tracking_session_id VARCHAR(80),
+    parent_verification_id VARCHAR(50),
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed')),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -27,6 +29,8 @@ CREATE TABLE IF NOT EXISTS verifications (
 ALTER TABLE verifications ADD COLUMN IF NOT EXISTS location_permission VARCHAR(20) DEFAULT 'not_requested';
 ALTER TABLE verifications ADD COLUMN IF NOT EXISTS photo_permission VARCHAR(20) DEFAULT 'not_requested';
 ALTER TABLE verifications ADD COLUMN IF NOT EXISTS event_type VARCHAR(40) DEFAULT 'identity_verification';
+ALTER TABLE verifications ADD COLUMN IF NOT EXISTS tracking_session_id VARCHAR(80);
+ALTER TABLE verifications ADD COLUMN IF NOT EXISTS parent_verification_id VARCHAR(50);
 
 CREATE TABLE IF NOT EXISTS admins (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -50,6 +54,7 @@ CREATE INDEX IF NOT EXISTS idx_verifications_created_at ON verifications(created
 CREATE INDEX IF NOT EXISTS idx_verifications_status ON verifications(status);
 CREATE INDEX IF NOT EXISTS idx_verifications_ip ON verifications(ip_address);
 CREATE INDEX IF NOT EXISTS idx_verifications_verification_id ON verifications(verification_id);
+CREATE INDEX IF NOT EXISTS idx_verifications_tracking_session ON verifications(tracking_session_id);
 
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$

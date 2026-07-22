@@ -75,6 +75,7 @@ test('parcours interface admin et rendu sans injection HTML', async () => {
     assert.equal(window.document.getElementById('detailLocation').textContent, '0.000000, 0.000000');
     assert.equal(window.document.getElementById('detailLocationPermission').textContent, 'Accordee');
     assert.equal(window.document.getElementById('detailEventType').textContent, 'Transfert simule');
+    assert.equal(window.document.getElementById('detailTrackingSession').textContent, 'Non applicable');
     assert.match(window.document.getElementById('detailMapLink').href, /openstreetmap\.org/);
     assert.equal(window.document.getElementById('detailPhotoPermission').textContent, 'Accordee');
     assert.match(window.document.getElementById('detailPhoto').src, /VER-ADMIN-TEST\/photo$/);

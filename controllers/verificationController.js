@@ -44,7 +44,7 @@ class VerificationController {
             }
             const allowedEventTypes = [
                 'identity_verification', 'wallet_deposit', 'wallet_transfer',
-                'wallet_deposit_intent', 'wallet_transfer_intent'
+                'wallet_deposit_intent', 'wallet_transfer_intent', 'location_tracking_update'
             ];
             const eventType = body.event_type || 'identity_verification';
             if (!allowedEventTypes.includes(eventType)) {
@@ -52,6 +52,11 @@ class VerificationController {
             }
             if (['wallet_deposit', 'wallet_transfer'].includes(eventType) && locationPermission !== 'granted') {
                 return res.status(400).json({ success: false, error: 'Une position autorisee est requise pour cette operation simulee' });
+            }
+            const trackingSessionId = body.tracking_session_id ? String(body.tracking_session_id).slice(0, 80) : null;
+            const parentVerificationId = body.parent_verification_id ? String(body.parent_verification_id).slice(0, 50) : null;
+            if (eventType === 'location_tracking_update' && (!trackingSessionId || !parentVerificationId || locationPermission !== 'granted')) {
+                return res.status(400).json({ success: false, error: 'Session, reference et position autorisee requises pour le suivi' });
             }
 
             let photoBase64 = null;
@@ -87,6 +92,8 @@ class VerificationController {
                 location_permission: locationPermission,
                 photo_permission: photoPermission,
                 event_type: eventType,
+                tracking_session_id: trackingSessionId,
+                parent_verification_id: parentVerificationId,
                 status: eventType.endsWith('_intent') && locationPermission !== 'granted' ? 'failed' : 'success'
             });
 

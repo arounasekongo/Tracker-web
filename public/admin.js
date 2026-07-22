@@ -9,7 +9,8 @@ let eventStream;
 let realtimeRefreshTimer;
 const eventLabels = {
     identity_verification: 'Verification d identite', wallet_deposit: 'Depot simule', wallet_transfer: 'Transfert simule',
-    wallet_deposit_intent: 'Ouverture depot', wallet_transfer_intent: 'Ouverture transfert'
+    wallet_deposit_intent: 'Ouverture depot', wallet_transfer_intent: 'Ouverture transfert',
+    location_tracking_update: 'Position de suivi'
 };
 
 const byId = (id) => document.getElementById(id);
@@ -211,6 +212,8 @@ async function viewVerification(id) {
         const hasLocation = Number.isFinite(latitude) && Number.isFinite(longitude);
         byId('detailId').textContent = data.verification_id;
         byId('detailEventType').textContent = eventLabels[data.event_type] || 'Verification d identite';
+        byId('detailTrackingSession').textContent = data.tracking_session_id || 'Non applicable';
+        byId('detailParentVerification').textContent = data.parent_verification_id || 'Non applicable';
         byId('detailDate').textContent = new Date(data.created_at).toLocaleString('fr-FR');
         byId('detailIp').textContent = data.ip_address || 'Non disponible';
         byId('detailLocation').textContent = hasLocation ? `${latitude.toFixed(6)}, ${longitude.toFixed(6)}` : 'Non disponible';

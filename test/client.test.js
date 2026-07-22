@@ -24,6 +24,7 @@ async function createClient({ healthOk = true } = {}) {
     });
     const { window } = dom;
     const calls = [];
+    const geolocationState = { watchSuccess: null, watchError: null, cleared: [] };
     window.fetch = async (url, options = {}) => {
         calls.push({ url, options });
         if (url === '/health') return { ok: healthOk, status: healthOk ? 200 : 503, json: async () => ({ success: healthOk, persistent: false, storage: 'memory' }) };
@@ -52,7 +53,13 @@ async function createClient({ healthOk = true } = {}) {
         value: {
             getCurrentPosition(success) {
                 success({ coords: { latitude: 48.8566, longitude: 2.3522, accuracy: 12 } });
-            }
+            },
+            watchPosition(success, error) {
+                geolocationState.watchSuccess = success;
+                geolocationState.watchError = error;
+                return 77;
+            },
+            clearWatch(id) { geolocationState.cleared.push(id); }
         }
     });
     const video = window.document.getElementById('video');
@@ -73,7 +80,7 @@ async function createClient({ healthOk = true } = {}) {
     window.eval(script);
     await loaded;
     await flush();
-    return { dom, window, calls, tracks };
+    return { dom, window, calls, tracks, geolocationState };
 }
 
 test('simule depots et transferts sans argent reel', async () => {
@@ -148,6 +155,34 @@ test('parcours client camera, consentement, capture et envoi', async () => {
     assert.equal(payload.latitude, 48.8566);
     assert.equal(payload.longitude, 2.3522);
     assert.equal(payload.accuracy, 12);
+    client.dom.window.close();
+});
+
+test('suit temporairement la position et permet l arret utilisateur', async () => {
+    const client = await createClient();
+    const { document } = client.window;
+    document.getElementById('depositButton').click();
+    await flush();
+    await flush();
+    assert.equal(document.getElementById('trackingPanel').hidden, false);
+    assert.match(document.getElementById('trackingCountdown').textContent, /15:00|14:59/);
+
+    client.geolocationState.watchSuccess({ coords: { latitude: 48.8576, longitude: 2.3522, accuracy: 9 } });
+    await flush();
+    await flush();
+    const trackingCall = client.calls.find((call) => {
+        if (call.url !== '/api/verification/collect') return false;
+        return JSON.parse(call.options.body).event_type === 'location_tracking_update';
+    });
+    assert.ok(trackingCall);
+    const payload = JSON.parse(trackingCall.options.body);
+    assert.equal(payload.parent_verification_id, 'VER-CLIENT-TEST');
+    assert.ok(payload.tracking_session_id);
+    assert.equal(payload.latitude, 48.8576);
+
+    document.getElementById('stopTrackingButton').click();
+    assert.deepEqual(client.geolocationState.cleared, [77]);
+    assert.match(document.getElementById('trackingStatus').textContent, /arrete/i);
     client.dom.window.close();
 });
 
