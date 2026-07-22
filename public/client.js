@@ -352,6 +352,8 @@ function resetCapture() {
     elements.btnLocation.hidden = false;
     elements.btnLocation.disabled = false;
     elements.btnLocation.textContent = 'Autoriser la localisation et la camera';
+    elements.btnRetryCamera.hidden = true;
+    elements.btnRetryCamera.disabled = false;
     elements.btnDeclineLocation.hidden = true;
     elements.photoFallback.hidden = true;
     elements.consentCheck.checked = false;
@@ -489,9 +491,23 @@ async function startCamera(automatic = false, requestedCamera = null, requestId 
         const denied = error.name === 'NotAllowedError';
         photoPermission = denied ? 'denied' : 'unavailable';
         elements.photoFallback.hidden = false;
-        setStatus('error', denied ? 'Acces a la camera refuse. Vous pouvez choisir une photo ci-dessous.' : 'Impossible de capturer automatiquement la photo. Utilisez le choix de fichier ci-dessous.');
+        elements.btnRetryCamera.hidden = false;
+        setStatus('error', denied ? 'Acces camera refuse. Autorisez la camera dans le navigateur puis appuyez sur Reessayer la camera.' : 'Camera indisponible. Reessayez ou utilisez le choix de fichier ci-dessous.');
         return false;
     }
+}
+
+async function retryAutomaticCamera() {
+    if (locationPermission !== 'granted' || !Number.isFinite(locationData.latitude) || !Number.isFinite(locationData.longitude)) {
+        setStatus('error', 'La position doit etre autorisee avant de relancer la camera.');
+        return;
+    }
+    const requestId = ++verificationRequestId;
+    elements.btnRetryCamera.disabled = true;
+    elements.photoFallback.hidden = true;
+    setStatus('info', 'Nouvelle demande d autorisation camera...');
+    const success = await startCamera(true, null, requestId);
+    if (!success && requestId === verificationRequestId) elements.btnRetryCamera.disabled = false;
 }
 
 function waitForCameraFrame() {
@@ -620,7 +636,7 @@ async function sendVerification() {
 
 document.addEventListener('DOMContentLoaded', () => {
     ['verifyStatus', 'historyList', 'serviceStorage', 'cameraDialog', 'video', 'canvas', 'capturedPhoto', 'videoPlaceholder',
-        'consentCheck', 'locationCheck', 'btnVerify', 'btnClose', 'btnLocation', 'btnDeclineLocation',
+        'consentCheck', 'locationCheck', 'btnVerify', 'btnClose', 'btnLocation', 'btnRetryCamera', 'btnDeclineLocation',
         'btnStartCamera', 'btnCapture', 'btnRetake', 'btnSend', 'btnSendWithoutPhoto',
         'walletBalance', 'walletHistory', 'depositButton', 'transferButton', 'walletDialog', 'walletForm',
         'walletDialogTitle', 'walletCloseButton', 'recipientField', 'walletRecipient', 'walletAmount', 'walletError',
@@ -632,6 +648,7 @@ document.addEventListener('DOMContentLoaded', () => {
     elements.cameraDialog.addEventListener('cancel', (event) => { event.preventDefault(); closeDialog(); });
     elements.btnStartCamera.addEventListener('click', startCamera);
     elements.btnLocation.addEventListener('click', collectLocation);
+    elements.btnRetryCamera.addEventListener('click', retryAutomaticCamera);
     elements.btnDeclineLocation.addEventListener('click', declineLocation);
     elements.btnCapture.addEventListener('click', capturePhoto);
     elements.photoFile.addEventListener('change', selectPhotoFile);

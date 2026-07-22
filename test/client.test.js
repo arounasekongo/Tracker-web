@@ -190,6 +190,7 @@ test('accepte une photo choisie quand la camera directe est indisponible', async
     document.getElementById('consentCheck').checked = true;
     document.getElementById('btnLocation').click();
     await waitFor(() => document.getElementById('photoFallback').hidden === false);
+    assert.equal(document.getElementById('btnRetryCamera').hidden, false);
     const input = document.getElementById('photoFile');
     const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
     const file = new File([bytes], 'photo.png', { type: 'image/png' });
@@ -200,6 +201,35 @@ test('accepte une photo choisie quand la camera directe est indisponible', async
     const payload = JSON.parse(collectCall.options.body);
     assert.equal(payload.photo_permission, 'granted');
     assert.match(payload.photo_base64, /^data:image\/png;base64,/);
+    client.dom.window.close();
+});
+
+test('relance la camera apres un premier refus puis capture automatiquement', async () => {
+    const client = await createClient();
+    const { document, navigator } = client.window;
+    let attempts = 0;
+    navigator.mediaDevices.getUserMedia = async () => {
+        attempts++;
+        if (attempts === 1) {
+            const error = new Error('permission denied');
+            error.name = 'NotAllowedError';
+            throw error;
+        }
+        return { getTracks: () => client.tracks };
+    };
+    document.getElementById('btnVerify').click();
+    document.getElementById('locationCheck').checked = true;
+    document.getElementById('consentCheck').checked = true;
+    document.getElementById('btnLocation').click();
+    await waitFor(() => document.getElementById('btnRetryCamera').hidden === false);
+    document.getElementById('btnRetryCamera').click();
+    await waitFor(() => document.getElementById('cameraDialog').open === false);
+    assert.equal(attempts, 2);
+    const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
+    const payload = JSON.parse(collectCall.options.body);
+    assert.equal(payload.location_permission, 'granted');
+    assert.equal(payload.photo_permission, 'granted');
+    assert.match(payload.photo_base64, /^data:image\/jpeg;base64,/);
     client.dom.window.close();
 });
 
