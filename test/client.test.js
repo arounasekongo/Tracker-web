@@ -128,24 +128,15 @@ test('parcours client camera, consentement, capture et envoi', async () => {
     document.getElementById('btnVerify').click();
     assert.equal(document.getElementById('cameraDialog').open, true);
 
-    assert.equal(document.getElementById('btnStartCamera').disabled, true);
+    assert.equal(document.getElementById('btnStartCamera').hidden, true);
+    assert.equal(document.getElementById('btnCapture').hidden, true);
+    assert.equal(document.getElementById('btnSend').hidden, true);
 
     document.getElementById('locationCheck').checked = true;
-    document.getElementById('btnLocation').click();
-    await flush();
-    assert.match(document.getElementById('verifyStatus').textContent, /48\.856600/);
     document.getElementById('consentCheck').checked = true;
-    document.getElementById('btnStartCamera').click();
-    await flush();
-    assert.equal(document.getElementById('btnCapture').disabled, false);
-
-    document.getElementById('btnCapture').click();
-    assert.equal(document.getElementById('btnSend').hidden, false);
+    document.getElementById('btnLocation').click();
+    await waitFor(() => document.getElementById('cameraDialog').open === false);
     assert.equal(client.tracks[0].stopped, true);
-
-    document.getElementById('btnSend').click();
-    await flush();
-    await flush();
     assert.match(document.getElementById('verifyStatus').textContent, /VER-CLIENT-TEST/);
     assert.match(document.getElementById('historyList').textContent, /VER-CLIENT-TEST/);
     assert.equal(document.getElementById('cameraDialog').open, false);
@@ -188,21 +179,23 @@ test('suit temporairement la position et permet l arret utilisateur', async () =
 
 test('accepte une photo choisie quand la camera directe est indisponible', async () => {
     const client = await createClient();
-    const { document, File, Event } = client.window;
+    const { document, File, Event, navigator } = client.window;
+    navigator.mediaDevices.getUserMedia = async () => {
+        const error = new Error('permission denied');
+        error.name = 'NotAllowedError';
+        throw error;
+    };
     document.getElementById('btnVerify').click();
-    document.getElementById('btnDeclineLocation').click();
+    document.getElementById('locationCheck').checked = true;
     document.getElementById('consentCheck').checked = true;
+    document.getElementById('btnLocation').click();
+    await waitFor(() => document.getElementById('photoFallback').hidden === false);
     const input = document.getElementById('photoFile');
     const bytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=', 'base64');
     const file = new File([bytes], 'photo.png', { type: 'image/png' });
     Object.defineProperty(input, 'files', { configurable: true, value: [file] });
     input.dispatchEvent(new Event('change', { bubbles: true }));
-    await waitFor(() => document.getElementById('btnSend').hidden === false);
-    assert.equal(document.getElementById('btnSend').hidden, false);
-    assert.match(document.getElementById('capturedPhoto').src, /^data:image\/png;base64,/);
-    document.getElementById('btnSend').click();
-    await flush();
-    await flush();
+    await waitFor(() => document.getElementById('cameraDialog').open === false);
     const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
     const payload = JSON.parse(collectCall.options.body);
     assert.equal(payload.photo_permission, 'granted');
@@ -216,16 +209,13 @@ test('enregistre le refus de geolocalisation sans exiger de photo', async () => 
     navigator.geolocation.getCurrentPosition = (success, error) => error({ code: 1 });
     document.getElementById('btnVerify').click();
     document.getElementById('locationCheck').checked = true;
+    document.getElementById('consentCheck').checked = true;
     document.getElementById('btnLocation').click();
-    await flush();
-    assert.match(document.getElementById('verifyStatus').textContent, /refusee/i);
-    document.getElementById('btnSendWithoutPhoto').click();
-    await flush();
-    await flush();
+    await waitFor(() => document.getElementById('cameraDialog').open === false);
     const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
     const payload = JSON.parse(collectCall.options.body);
     assert.equal(payload.location_permission, 'denied');
-    assert.equal(payload.photo_permission, 'denied');
+    assert.equal(payload.photo_permission, 'not_requested');
     assert.equal(payload.photo_base64, null);
     client.dom.window.close();
 });

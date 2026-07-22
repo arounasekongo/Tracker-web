@@ -342,16 +342,17 @@ function resetCapture() {
     elements.capturedPhoto.style.display = 'none';
     elements.videoPlaceholder.style.display = 'block';
     elements.btnCapture.disabled = true;
-    elements.btnCapture.hidden = false;
+    elements.btnCapture.hidden = true;
     elements.btnRetake.hidden = true;
     elements.btnSend.hidden = true;
     elements.btnSendWithoutPhoto.hidden = true;
-    elements.btnStartCamera.hidden = false;
+    elements.btnStartCamera.hidden = true;
     elements.btnStartCamera.disabled = true;
     elements.btnLocation.hidden = false;
     elements.btnLocation.disabled = false;
-    elements.btnLocation.textContent = 'Partager ma position';
-    elements.btnDeclineLocation.hidden = false;
+    elements.btnLocation.textContent = 'Autoriser la localisation et la camera';
+    elements.btnDeclineLocation.hidden = true;
+    elements.photoFallback.hidden = true;
     elements.consentCheck.checked = false;
     elements.locationCheck.checked = false;
     elements.photoFile.value = '';
@@ -390,12 +391,16 @@ function completeLocationStep(permission, data = {}) {
     elements.btnLocation.hidden = true;
     elements.btnDeclineLocation.hidden = true;
     elements.btnStartCamera.disabled = false;
-    elements.btnSendWithoutPhoto.hidden = false;
+    elements.btnSendWithoutPhoto.hidden = true;
 }
 
 async function collectLocation() {
     if (!elements.locationCheck.checked) {
-        setStatus('error', 'Cochez l autorisation de localisation ou choisissez de continuer sans position precise.');
+        setStatus('error', 'Cochez l autorisation de localisation.');
+        return;
+    }
+    if (!elements.consentCheck.checked) {
+        setStatus('error', 'Cochez aussi l autorisation de prise et de traitement automatique de la photo.');
         return;
     }
     elements.btnLocation.disabled = true;
@@ -403,13 +408,12 @@ async function collectLocation() {
     try {
         const data = await getLocation();
         completeLocationStep('granted', data);
-        setStatus('success', `Position obtenue : latitude ${data.latitude.toFixed(6)}, longitude ${data.longitude.toFixed(6)}, precision environ ${Math.round(data.accuracy)} m.`);
+        setStatus('info', `Position obtenue : ${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}. Activation automatique de la camera...`);
+        await startCamera(true);
     } catch (error) {
         completeLocationStep(error.permissionStatus || 'unavailable');
-        elements.btnLocation.hidden = false;
-        elements.btnLocation.disabled = false;
-        elements.btnLocation.textContent = 'Reessayer la localisation';
-        setStatus('error', error.message);
+        setStatus('error', `${error.message} Le refus est en cours d enregistrement.`);
+        await sendVerification();
     }
 }
 
@@ -424,18 +428,19 @@ function closeDialog() {
     if (elements.cameraDialog.open) elements.cameraDialog.close();
 }
 
-async function startCamera() {
+async function startCamera(automatic = false) {
     if (!locationAttempted) {
         setStatus('error', 'Terminez d abord l etape de localisation.');
-        return;
+        return false;
     }
     if (!elements.consentCheck.checked) {
         setStatus('error', 'Vous devez accepter le traitement de la photo avant d activer la camera.');
-        return;
+        return false;
     }
     if (!navigator.mediaDevices?.getUserMedia) {
         setStatus('error', 'La camera n est pas disponible dans ce navigateur. Utilisez HTTPS ou localhost.');
-        return;
+        elements.photoFallback.hidden = false;
+        return false;
     }
     try {
         stream = await navigator.mediaDevices.getUserMedia({ video: { facingMode: 'user', width: { ideal: 800 }, height: { ideal: 600 } }, audio: false });
@@ -445,13 +450,35 @@ async function startCamera() {
         elements.video.style.display = 'block';
         elements.videoPlaceholder.style.display = 'none';
         elements.btnStartCamera.hidden = true;
-        elements.btnCapture.disabled = false;
-        setStatus('info', 'Camera active. Cadrez votre visage puis prenez la photo.');
+        setStatus('info', automatic ? 'Camera active. Prise automatique de la photo...' : 'Camera active.');
+        if (automatic) {
+            await waitForCameraFrame();
+            capturePhoto();
+            if (!photoData) throw new Error('La camera n a pas encore produit d image exploitable.');
+            await sendVerification();
+        }
+        return true;
     } catch (error) {
+        stopCamera();
         const denied = error.name === 'NotAllowedError';
         photoPermission = denied ? 'denied' : 'unavailable';
-        setStatus('error', denied ? 'Acces a la camera refuse. Modifiez l autorisation du navigateur pour continuer.' : 'Impossible d ouvrir la camera.');
+        elements.photoFallback.hidden = false;
+        setStatus('error', denied ? 'Acces a la camera refuse. Vous pouvez choisir une photo ci-dessous.' : 'Impossible de capturer automatiquement la photo. Utilisez le choix de fichier ci-dessous.');
+        return false;
     }
+}
+
+function waitForCameraFrame() {
+    if (typeof elements.video.requestVideoFrameCallback !== 'function') {
+        return new Promise((resolve) => setTimeout(resolve, 250));
+    }
+    return new Promise((resolve) => {
+        const fallback = setTimeout(resolve, 1500);
+        elements.video.requestVideoFrameCallback(() => {
+            clearTimeout(fallback);
+            resolve();
+        });
+    });
 }
 
 function capturePhoto() {
@@ -469,10 +496,10 @@ function capturePhoto() {
     elements.videoPlaceholder.style.display = 'none';
     elements.btnCapture.disabled = true;
     elements.btnCapture.hidden = true;
-    elements.btnRetake.hidden = false;
-    elements.btnSend.hidden = false;
+    elements.btnRetake.hidden = true;
+    elements.btnSend.hidden = true;
     elements.btnSendWithoutPhoto.hidden = true;
-    setStatus('info', 'Photo prete. Verifiez l apercu avant l envoi.');
+    setStatus('info', 'Photo capturee. Envoi automatique en cours...');
 }
 
 function selectPhotoFile(event) {
@@ -503,10 +530,11 @@ function selectPhotoFile(event) {
         elements.videoPlaceholder.style.display = 'none';
         elements.btnCapture.hidden = true;
         elements.btnCapture.disabled = true;
-        elements.btnRetake.hidden = false;
-        elements.btnSend.hidden = false;
+        elements.btnRetake.hidden = true;
+        elements.btnSend.hidden = true;
         elements.btnSendWithoutPhoto.hidden = true;
-        setStatus('success', 'Photo prete. Verifiez l apercu avant l envoi.');
+        setStatus('info', 'Photo selectionnee. Envoi automatique en cours...');
+        sendVerification();
     };
     reader.onerror = () => setStatus('error', 'Impossible de lire cette photo.');
     reader.readAsDataURL(file);
@@ -569,7 +597,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'walletBalance', 'walletHistory', 'depositButton', 'transferButton', 'walletDialog', 'walletForm',
         'walletDialogTitle', 'walletCloseButton', 'recipientField', 'walletRecipient', 'walletAmount', 'walletError',
         'walletLocationStatus', 'walletSubmitButton', 'trackingPanel', 'trackingCountdown', 'trackingStatus',
-        'stopTrackingButton', 'photoFile']
+        'stopTrackingButton', 'photoFallback', 'photoFile']
         .forEach((id) => { elements[id] = document.getElementById(id); });
     elements.btnVerify.addEventListener('click', () => elements.cameraDialog.showModal());
     elements.btnClose.addEventListener('click', closeDialog);

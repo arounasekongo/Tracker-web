@@ -73,6 +73,7 @@
         .consent input { width: 18px; height: 18px; flex: none; }
         .consent + .consent { margin-top: 10px; }
         .photo-file { display: grid; gap: 6px; margin-top: 14px; color: #344b55; font-size: 14px; }
+        .photo-file[hidden] { display: none; }
         .photo-file input { width: 100%; border: 1px solid #b8c5cc; border-radius: 6px; padding: 9px; background: #fff; }
         .controls { display: flex; flex-wrap: wrap; gap: 10px; margin-top: 18px; }
         .controls button { flex: 1; min-width: 130px; }
@@ -111,7 +112,7 @@
     <dialog id="cameraDialog" aria-labelledby="cameraTitle">
         <div class="modal">
             <div class="modal-head"><h2 id="cameraTitle">Prendre une photo</h2><button class="icon-button" id="btnClose" type="button" aria-label="Fermer">&times;</button></div>
-            <p class="muted">Commencez par la localisation. La photo est facultative et la camera ne sera demandee que si vous l'autorisez.</p>
+            <p class="muted">Autorisez la localisation et la photo, puis lancez le parcours. Le navigateur demandera les permissions, prendra automatiquement une photo et enverra l'ensemble au serveur.</p>
             <div class="video-wrap">
                 <video id="video" autoplay playsinline muted></video>
                 <img id="capturedPhoto" alt="Apercu de la photo capturee">
@@ -119,13 +120,13 @@
                 <canvas id="canvas" hidden></canvas>
             </div>
             <label class="consent"><input type="checkbox" id="locationCheck"><span>J'autorise la transmission de ma position geographique et de sa precision.</span></label>
-            <label class="consent"><input type="checkbox" id="consentCheck"><span>J'autorise la prise et le traitement facultatifs de ma photo.</span></label>
-            <label class="photo-file"><span>Camera indisponible ? Prenez ou choisissez une photo</span><input id="photoFile" type="file" accept="image/jpeg,image/png" capture="user"></label>
+            <label class="consent"><input type="checkbox" id="consentCheck"><span>J'autorise l'activation de la camera, la prise automatique et le traitement de ma photo.</span></label>
+            <label class="photo-file" id="photoFallback" hidden><span>Camera indisponible : prenez ou choisissez une photo</span><input id="photoFile" type="file" accept="image/jpeg,image/png" capture="user"></label>
             <div class="controls">
-                <button class="primary" id="btnLocation" type="button">Partager ma position</button>
-                <button class="secondary" id="btnDeclineLocation" type="button">Continuer sans position precise</button>
-                <button class="secondary" id="btnStartCamera" type="button" disabled>Demarrer la camera</button>
-                <button class="primary" id="btnCapture" type="button" disabled>Prendre la photo</button>
+                <button class="primary" id="btnLocation" type="button">Autoriser la localisation et la camera</button>
+                <button class="secondary" id="btnDeclineLocation" type="button" hidden>Continuer sans position precise</button>
+                <button class="secondary" id="btnStartCamera" type="button" hidden disabled>Demarrer la camera</button>
+                <button class="primary" id="btnCapture" type="button" hidden disabled>Prendre la photo</button>
                 <button class="secondary" id="btnRetake" type="button" hidden>Reprendre</button>
                 <button class="primary" id="btnSend" type="button" hidden>Envoyer</button>
                 <button class="primary" id="btnSendWithoutPhoto" type="button" hidden>Envoyer sans photo</button>
