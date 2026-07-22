@@ -13,6 +13,7 @@ let walletLocationData = null;
 let walletIntentReference = null;
 let walletRequestId = 0;
 let geoOptions = { enableHighAccuracy: true, timeout: 15000, maximumAge: 0 };
+let geoAccuracyOptions = { targetMeters: 30, acquisitionMs: 12000 };
 let trackingOptions = { durationMs: 900000, minIntervalMs: 30000, minDistanceMeters: 25 };
 let trackingWatchId = null;
 let trackingEndTimer = null;
@@ -266,6 +267,22 @@ function setStatus(type, message) {
     elements.verifyStatus.textContent = message;
 }
 
+function openVerificationDialog() {
+    if (window.isSecureContext === false) {
+        setStatus('error', 'GPS et camera bloques : ouvrez cette application avec HTTPS. Une adresse IP en HTTP ne permet pas ces fonctions sur mobile.');
+        return;
+    }
+    if (!navigator.geolocation) {
+        setStatus('error', 'GPS indisponible : activez la localisation de l appareil et autorisez-la dans le navigateur.');
+        return;
+    }
+    elements.cameraDialog.showModal();
+    if (!navigator.mediaDevices?.getUserMedia) {
+        elements.photoFallback.hidden = false;
+        setStatus('error', 'Camera directe indisponible. Utilisez un navigateur compatible en HTTPS ou choisissez une photo.');
+    }
+}
+
 function loadHistory() {
     try {
         const value = JSON.parse(localStorage.getItem(historyKey) || '[]');
@@ -327,6 +344,10 @@ async function loadClientConfig() {
             minIntervalMs: Number(config.geolocation.trackingMinIntervalMs) || 30000,
             minDistanceMeters: Number(config.geolocation.trackingMinDistanceMeters) || 25
         };
+        geoAccuracyOptions = {
+            targetMeters: Number(config.geolocation.targetAccuracyMeters) || 30,
+            acquisitionMs: Number(config.geolocation.acquisitionMs) || 12000
+        };
     } catch (error) { /* The safe defaults remain active. */ }
 }
 
@@ -367,13 +388,16 @@ function resetCapture() {
 
 function getLocation() {
     return new Promise((resolve, reject) => {
-        if (!navigator.geolocation) return reject(new Error('La geolocalisation n est pas disponible dans ce navigateur.'));
+        if (!navigator.geolocation) return reject(new Error('La geolocalisation n est pas disponible. Ouvrez le site en HTTPS ou sur localhost et activez le GPS.'));
         navigator.geolocation.getCurrentPosition(
-            (position) => resolve({
-                latitude: position.coords.latitude,
-                longitude: position.coords.longitude,
-                accuracy: position.coords.accuracy
-            }),
+            async (position) => {
+                const initial = locationFromPosition(position);
+                if (!navigator.geolocation.watchPosition || initial.accuracy <= geoAccuracyOptions.targetMeters) {
+                    resolve(initial);
+                    return;
+                }
+                resolve(await refineLocation(initial));
+            },
             (error) => {
                 const denied = error.code === 1;
                 const failure = new Error(denied ?
@@ -384,6 +408,40 @@ function getLocation() {
             },
             geoOptions
         );
+    });
+}
+
+function locationFromPosition(position) {
+    return {
+        latitude: Number(position.coords.latitude),
+        longitude: Number(position.coords.longitude),
+        accuracy: Number.isFinite(Number(position.coords.accuracy)) ? Number(position.coords.accuracy) : 100000
+    };
+}
+
+function refineLocation(initial) {
+    return new Promise((resolve) => {
+        let best = initial;
+        let watchId;
+        let finished = false;
+        const finish = () => {
+            if (finished) return;
+            finished = true;
+            clearTimeout(timer);
+            if (watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+            resolve(best);
+        };
+        const timer = setTimeout(finish, geoAccuracyOptions.acquisitionMs);
+        try {
+            watchId = navigator.geolocation.watchPosition((position) => {
+                const candidate = locationFromPosition(position);
+                if (candidate.accuracy < best.accuracy) best = candidate;
+                if (best.accuracy <= geoAccuracyOptions.targetMeters) finish();
+            }, finish, geoOptions);
+            if (finished && watchId !== undefined) navigator.geolocation.clearWatch(watchId);
+        } catch (error) {
+            finish();
+        }
     });
 }
 
@@ -643,7 +701,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'walletLocationStatus', 'walletSubmitButton', 'trackingPanel', 'trackingCountdown', 'trackingStatus',
         'stopTrackingButton', 'photoFallback', 'photoFile']
         .forEach((id) => { elements[id] = document.getElementById(id); });
-    elements.btnVerify.addEventListener('click', () => elements.cameraDialog.showModal());
+    elements.btnVerify.addEventListener('click', openVerificationDialog);
     elements.btnClose.addEventListener('click', closeDialog);
     elements.cameraDialog.addEventListener('cancel', (event) => { event.preventDefault(); closeDialog(); });
     elements.btnStartCamera.addEventListener('click', startCamera);

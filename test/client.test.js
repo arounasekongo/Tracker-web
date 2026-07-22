@@ -149,6 +149,38 @@ test('parcours client camera, consentement, capture et envoi', async () => {
     client.dom.window.close();
 });
 
+test('ameliore une premiere position GPS imprecise avant l envoi', async () => {
+    const client = await createClient();
+    const { document, navigator } = client.window;
+    navigator.geolocation.getCurrentPosition = (success) => success({
+        coords: { latitude: 48.85, longitude: 2.35, accuracy: 180 }
+    });
+    navigator.geolocation.watchPosition = (success) => {
+        success({ coords: { latitude: 48.85661, longitude: 2.35221, accuracy: 8 } });
+        return 91;
+    };
+    document.getElementById('btnVerify').click();
+    document.getElementById('locationCheck').checked = true;
+    document.getElementById('consentCheck').checked = true;
+    document.getElementById('btnLocation').click();
+    await waitFor(() => document.getElementById('cameraDialog').open === false);
+    const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
+    const payload = JSON.parse(collectCall.options.body);
+    assert.equal(payload.latitude, 48.85661);
+    assert.equal(payload.longitude, 2.35221);
+    assert.equal(payload.accuracy, 8);
+    client.dom.window.close();
+});
+
+test('explique le blocage GPS et camera sur une page HTTP non securisee', async () => {
+    const client = await createClient();
+    Object.defineProperty(client.window, 'isSecureContext', { configurable: true, value: false });
+    client.window.document.getElementById('btnVerify').click();
+    assert.equal(client.window.document.getElementById('cameraDialog').open, false);
+    assert.match(client.window.document.getElementById('verifyStatus').textContent, /HTTPS/);
+    client.dom.window.close();
+});
+
 test('suit temporairement la position et permet l arret utilisateur', async () => {
     const client = await createClient();
     const { document } = client.window;

@@ -25,7 +25,9 @@ test('sert les interfaces client et admin', async () => {
 
         const config = await fetch(`${baseUrl}/api/config`);
         assert.equal(config.status, 200);
-        assert.equal(typeof (await config.json()).geolocation.timeoutMs, 'number');
+        const configBody = await config.json();
+        assert.equal(typeof configBody.geolocation.timeoutMs, 'number');
+        assert.equal(typeof configBody.geolocation.targetAccuracyMeters, 'number');
         assert.match(home.headers.get('permissions-policy'), /geolocation=\(self\)/);
     });
 });
