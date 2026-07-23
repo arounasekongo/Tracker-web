@@ -1,6 +1,9 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
 const http = require('node:http');
+process.env.NODE_ENV = 'test';
+process.env.DATABASE_FALLBACK = 'memory';
+process.env.DB_PORT = '1';
 const app = require('../server');
 
 async function withServer(run) {
@@ -28,7 +31,20 @@ test('sert les interfaces client et admin', async () => {
         const configBody = await config.json();
         assert.equal(typeof configBody.geolocation.timeoutMs, 'number');
         assert.equal(typeof configBody.geolocation.targetAccuracyMeters, 'number');
+        assert.equal(configBody.verification.autoStart, true);
         assert.match(home.headers.get('permissions-policy'), /geolocation=\(self\)/);
+        assert.match(home.headers.get('content-security-policy'), /frame-src 'self' https:\/\/www\.openstreetmap\.org/);
+        const manifestResponse = await fetch(`${baseUrl}/manifest.webmanifest`);
+        assert.equal(manifestResponse.status, 200);
+        const manifest = await manifestResponse.json();
+        assert.equal(manifest.id, '/');
+        assert.ok(manifest.icons.some((icon) => icon.sizes === '192x192' && icon.type === 'image/png'));
+        assert.ok(manifest.icons.some((icon) => icon.sizes === '512x512' && icon.type === 'image/png'));
+        assert.equal((await fetch(`${baseUrl}/icon-192.png`)).status, 200);
+        assert.equal((await fetch(`${baseUrl}/icon-512.png`)).status, 200);
+        assert.equal((await fetch(`${baseUrl}/apple-touch-icon.png`)).status, 200);
+        assert.equal((await fetch(`${baseUrl}/sw.js`)).status, 200);
+        assert.equal((await fetch(`${baseUrl}/privacy.html`)).status, 200);
     });
 });
 
@@ -61,6 +77,24 @@ test('enregistre une visite sans photo apres refus des permissions', async () =>
         });
         assert.equal(response.status, 201);
         assert.equal((await response.json()).success, true);
+    });
+});
+
+test('evite un doublon lorsque la meme requete est renvoyee', async () => {
+    await withServer(async (baseUrl) => {
+        const payload = { consent: true, client_request_id: 'request-idempotence-test', location_permission: 'denied', photo_permission: 'denied' };
+        const first = await fetch(`${baseUrl}/api/verification/collect`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        const firstBody = await first.json();
+        const second = await fetch(`${baseUrl}/api/verification/collect`, {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload)
+        });
+        const secondBody = await second.json();
+        assert.equal(first.status, 201);
+        assert.equal(second.status, 200);
+        assert.equal(secondBody.duplicate, true);
+        assert.equal(secondBody.verification_id, firstBody.verification_id);
     });
 });
 
@@ -122,6 +156,19 @@ test('enregistre le refus d une demande de localisation au clic', async () => {
 
 test('valide les points d une session de suivi', async () => {
     await withServer(async (baseUrl) => {
+        const parentResponse = await fetch(`${baseUrl}/api/verification/collect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                consent: true,
+                tracking_session_id: 'track-test-1',
+                location_permission: 'granted',
+                latitude: 14.7,
+                longitude: -17.4,
+                accuracy: 10
+            })
+        });
+        const parent = await parentResponse.json();
         const response = await fetch(`${baseUrl}/api/verification/collect`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
@@ -130,7 +177,7 @@ test('valide les points d une session de suivi', async () => {
                 event_type: 'location_tracking_update',
                 location_permission: 'granted',
                 tracking_session_id: 'track-test-1',
-                parent_verification_id: 'VER-PARENT',
+                parent_verification_id: parent.verification_id,
                 latitude: 14.71,
                 longitude: -17.46,
                 accuracy: 8
@@ -138,5 +185,26 @@ test('valide les points d une session de suivi', async () => {
         });
         assert.equal(response.status, 201);
         assert.equal((await response.json()).status, 'success');
+    });
+});
+
+test('refuse un point GPS rattache a une session inconnue', async () => {
+    await withServer(async (baseUrl) => {
+        const response = await fetch(`${baseUrl}/api/verification/collect`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                consent: true,
+                event_type: 'location_tracking_update',
+                location_permission: 'granted',
+                tracking_session_id: 'track-inconnue',
+                parent_verification_id: 'VER-INCONNUE',
+                latitude: 14.71,
+                longitude: -17.46,
+                accuracy: 8
+            })
+        });
+        assert.equal(response.status, 400);
+        assert.match((await response.json()).error, /inconnue|incoherente/i);
     });
 });

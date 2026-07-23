@@ -1,6 +1,6 @@
 {
   "name": "wave-verification",
-  "version": "1.0.0",
+  "version": "1.1.2",
   "private": true,
   "description": "Portefeuille de demonstration et controle d'identite avec consentement",
   "main": "server.js",
@@ -11,11 +11,34 @@
     "start": "node server.js",
     "dev": "node --watch server.js",
     "init-db": "node database/init.js",
+    "db:up": "docker compose up -d postgres",
+    "db:down": "docker compose down",
+    "db:logs": "docker compose logs -f postgres",
+    "db:local:start": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres.ps1 start",
+    "db:local:stop": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres.ps1 stop",
+    "db:local:status": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/postgres.ps1 status",
+    "db:backup": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/backup-postgres.ps1",
+    "db:backup:verify": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/verify-backup.ps1",
+    "db:backup:schedule": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-backup-task.ps1",
+    "db:backup:unschedule": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/remove-backup-task.ps1",
+    "app:local": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/start-local.ps1",
+    "mobile:add:android": "cap add android",
+    "mobile:sync": "cap sync android",
+    "mobile:open": "cap open android",
+    "mobile:run": "cap run android",
+    "mobile:build:release": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/build-android-release.ps1",
     "check": "node scripts/check.js",
+    "check:production": "node scripts/production-check.js",
+    "quality:run": "node scripts/quality-cycle.js",
+    "quality:schedule": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/install-quality-task.ps1",
+    "quality:unschedule": "powershell -NoProfile -ExecutionPolicy Bypass -File scripts/remove-quality-task.ps1",
     "test": "node --test",
     "test:e2e": "node scripts/e2e.js"
   },
   "dependencies": {
+    "@capacitor/android": "^8.4.2",
+    "@capacitor/core": "^8.4.2",
+    "@capgo/background-geolocation": "^8.3.1",
     "bcrypt": "^6.0.0",
     "connect-pg-simple": "^10.0.0",
     "cors": "^2.8.5",
@@ -25,12 +48,12 @@
     "express-rate-limit": "^7.5.1",
     "express-session": "^1.18.1",
     "helmet": "^8.1.0",
-    "jsonwebtoken": "^9.0.2",
     "pg": "^8.16.3",
     "pg-mem": "^3.0.5",
     "sharp": "^0.35.3"
   },
   "devDependencies": {
+    "@capacitor/cli": "^8.4.2",
     "jsdom": "^26.1.0"
   }
 }

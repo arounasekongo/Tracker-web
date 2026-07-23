@@ -7,6 +7,8 @@ let searchTimer;
 let refreshTimer;
 let eventStream;
 let realtimeRefreshTimer;
+let currentDetailId = null;
+let currentTrackPoints = [];
 const eventLabels = {
     identity_verification: 'Verification d identite', wallet_deposit: 'Depot simule', wallet_transfer: 'Transfert simule',
     wallet_deposit_intent: 'Ouverture depot', wallet_transfer_intent: 'Ouverture transfert',
@@ -28,14 +30,22 @@ function showDashboard(username) {
     byId('dashboardPage').style.display = 'block';
     byId('adminUser').textContent = username || 'Admin';
     clearInterval(refreshTimer);
-    refreshTimer = setInterval(() => Promise.all([loadData(), loadStats()]), 10000);
+    refreshTimer = setInterval(() => Promise.all([loadData(), loadStats(), loadOperations()]), 10000);
     startRealtime();
 }
 
 function startRealtime() {
     if (typeof EventSource === 'undefined' || eventStream) return;
     eventStream = new EventSource('/api/admin/events');
-    eventStream.addEventListener('verification', () => {
+    eventStream.addEventListener('verification', (event) => {
+        try {
+            const update = JSON.parse(event.data);
+            if (currentDetailId && update.parent_verification_id === currentDetailId &&
+                Number.isFinite(Number(update.latitude)) && Number.isFinite(Number(update.longitude))) {
+                currentTrackPoints.push(update);
+                renderTrack(currentTrackPoints);
+            }
+        } catch (error) { /* A refresh below remains the fallback. */ }
         clearTimeout(realtimeRefreshTimer);
         realtimeRefreshTimer = setTimeout(() => Promise.all([loadData(), loadStats()]), 250);
     });
@@ -46,7 +56,10 @@ function startRealtime() {
 async function apiFetch(url, options) {
     const response = await fetch(url, options);
     const data = await response.json().catch(() => ({}));
-    if (response.status === 401) { showLogin(); throw new Error('Session expiree'); }
+    if (response.status === 401 && url !== '/api/admin/login') {
+        showLogin();
+        throw new Error('Session expiree');
+    }
     if (!response.ok || data.success === false) throw new Error(data.error || 'Erreur serveur');
     return data;
 }
@@ -72,7 +85,7 @@ async function login(event) {
             body: JSON.stringify({ username: byId('username').value.trim(), password: byId('password').value })
         });
         showDashboard(data.admin.username);
-        await Promise.all([loadData(), loadStats()]);
+        await Promise.all([loadData(), loadStats(), loadOperations()]);
     } catch (error) {
         errorBox.textContent = error.message;
         errorBox.style.display = 'block';
@@ -84,6 +97,42 @@ async function logout() {
     byId('password').value = '';
     if (byId('detailDialog').open) byId('detailDialog').close();
     showLogin();
+}
+
+function openPasswordDialog() {
+    byId('passwordForm').reset();
+    byId('passwordError').hidden = true;
+    byId('passwordDialog').showModal();
+    byId('currentPassword').focus();
+}
+
+function closePasswordDialog() {
+    byId('passwordForm').reset();
+    byId('passwordDialog').close();
+}
+
+async function changePassword(event) {
+    event.preventDefault();
+    const errorBox = byId('passwordError');
+    errorBox.hidden = true;
+    const newPassword = byId('newPassword').value;
+    if (newPassword !== byId('confirmPassword').value) {
+        errorBox.textContent = 'La confirmation ne correspond pas au nouveau mot de passe';
+        errorBox.hidden = false;
+        return;
+    }
+    try {
+        const data = await apiFetch('/api/admin/password', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ current_password: byId('currentPassword').value, new_password: newPassword })
+        });
+        closePasswordDialog();
+        window.alert(data.message);
+    } catch (error) {
+        errorBox.textContent = error.message;
+        errorBox.hidden = false;
+    }
 }
 
 function filterParams() {
@@ -117,6 +166,44 @@ async function loadStats() {
         byId('statLocation').textContent = stats.with_location || 0;
         byId('statPhoto').textContent = stats.with_photo || 0;
     } catch (error) { /* loadData reports visible errors. */ }
+}
+
+async function loadOperations() {
+    try {
+        const [operations, audit, retention] = await Promise.all([
+            apiFetch('/api/admin/operations'),
+            apiFetch('/api/admin/audit?limit=12'),
+            apiFetch('/api/admin/retention')
+        ]);
+        const sizeMb = (Number(operations.data.photo_bytes || 0) / 1048576).toFixed(2);
+        const retentionLabel = retention.data.enabled ? `rétention ${retention.data.days} jours, ${retention.data.expired} expiré(s)` : 'rétention désactivée';
+        const backupLabel = operations.data.latest_backup ? `sauvegarde ${new Date(operations.data.latest_backup.created_at).toLocaleString('fr-FR')}` : 'aucune sauvegarde locale';
+        byId('operationsSummary').textContent = `${operations.data.storage} · ${operations.data.records} enregistrement(s) · ${sizeMb} Mo de photos · ${retentionLabel} · ${backupLabel} · disponibilité ${Math.floor(operations.data.uptime_seconds / 60)} min`;
+        const fragment = document.createDocumentFragment();
+        for (const item of audit.data) {
+            const li = document.createElement('li');
+            li.textContent = `${new Date(item.created_at).toLocaleString('fr-FR')} — ${item.username || 'Système'} — ${item.action}`;
+            fragment.append(li);
+        }
+        if (!audit.data.length) {
+            const li = document.createElement('li'); li.textContent = 'Aucune activité enregistrée'; fragment.append(li);
+        }
+        byId('auditList').replaceChildren(fragment);
+    } catch (error) {
+        byId('operationsSummary').textContent = error.message;
+    }
+}
+
+async function runRetention() {
+    const confirmation = window.prompt('Purge definitive des donnees expirees. Ecrivez PURGER pour confirmer :');
+    if (confirmation !== 'PURGER') return;
+    try {
+        const result = await apiFetch('/api/admin/retention/run', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation })
+        });
+        window.alert(result.message);
+        await Promise.all([loadData(), loadStats(), loadOperations()]);
+    } catch (error) { window.alert(error.message); }
 }
 
 function renderMessage(message, className = 'text-muted') {
@@ -184,8 +271,9 @@ async function deleteVerification(id) {
 }
 
 async function deleteAll() {
-    if (!window.confirm('Supprimer definitivement toutes les verifications ?')) return;
-    try { await apiFetch('/api/admin/verifications/all', { method: 'DELETE' }); currentPage = 0; await Promise.all([loadData(), loadStats()]); }
+    const confirmation = window.prompt('Suppression definitive. Ecrivez SUPPRIMER pour confirmer :');
+    if (confirmation !== 'SUPPRIMER') return;
+    try { await apiFetch('/api/admin/verifications/all', { method: 'DELETE', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ confirmation }) }); currentPage = 0; await Promise.all([loadData(), loadStats(), loadOperations()]); }
     catch (error) { window.alert(error.message); }
 }
 
@@ -206,7 +294,13 @@ async function searchVerifications() {
 
 async function viewVerification(id) {
     try {
-        const { data } = await apiFetch(`/api/admin/verification/${encodeURIComponent(id)}`);
+        const encodedId = encodeURIComponent(id);
+        const [{ data }, track] = await Promise.all([
+            apiFetch(`/api/admin/verification/${encodedId}`),
+            apiFetch(`/api/admin/verification/${encodedId}/track`)
+        ]);
+        currentDetailId = id;
+        currentTrackPoints = track.data || [];
         const latitude = Number(data.latitude);
         const longitude = Number(data.longitude);
         const hasLocation = Number.isFinite(latitude) && Number.isFinite(longitude);
@@ -227,24 +321,90 @@ async function viewVerification(id) {
         byId('detailPhotoSection').hidden = !data.has_photo;
         if (data.has_photo) byId('detailPhoto').src = `/api/admin/verification/${encodeURIComponent(id)}/photo`;
         else byId('detailPhoto').removeAttribute('src');
+        renderTrack(currentTrackPoints);
         byId('detailDialog').showModal();
     } catch (error) { window.alert(error.message); }
+}
+
+function renderTrack(points) {
+    const valid = (points || []).filter((point) => Number.isFinite(Number(point.latitude)) && Number.isFinite(Number(point.longitude)));
+    const section = byId('detailTrackSection');
+    const svg = byId('detailTrackMap');
+    section.hidden = valid.length === 0;
+    svg.replaceChildren();
+    if (!valid.length) {
+        byId('detailBaseMap').hidden = true;
+        byId('detailBaseMap').removeAttribute('src');
+        byId('detailBaseMap').removeAttribute('data-src');
+        return;
+    }
+    const latitudes = valid.map((point) => Number(point.latitude));
+    const longitudes = valid.map((point) => Number(point.longitude));
+    const minLat = Math.min(...latitudes); const maxLat = Math.max(...latitudes);
+    const minLon = Math.min(...longitudes); const maxLon = Math.max(...longitudes);
+    const latRange = Math.max(maxLat - minLat, 0.00001); const lonRange = Math.max(maxLon - minLon, 0.00001);
+    const latitudePadding = Math.max(latRange * 0.2, 0.002);
+    const longitudePadding = Math.max(lonRange * 0.2, 0.002);
+    const latest = valid[valid.length - 1];
+    const mapParams = new URLSearchParams({
+        bbox: `${minLon - longitudePadding},${minLat - latitudePadding},${maxLon + longitudePadding},${maxLat + latitudePadding}`,
+        layer: 'mapnik',
+        marker: `${Number(latest.latitude)},${Number(latest.longitude)}`
+    });
+    const mapUrl = `https://www.openstreetmap.org/export/embed.html?${mapParams}`;
+    byId('detailBaseMap').dataset.src = mapUrl;
+    if (!byId('detailBaseMap').hidden) byId('detailBaseMap').src = mapUrl;
+    const coordinates = valid.map((point) => ({
+        x: 24 + ((Number(point.longitude) - minLon) / lonRange) * 552,
+        y: 276 - ((Number(point.latitude) - minLat) / latRange) * 252
+    }));
+    const namespace = 'http://www.w3.org/2000/svg';
+    const line = document.createElementNS(namespace, 'polyline');
+    line.setAttribute('class', 'track-line');
+    line.setAttribute('points', coordinates.map((point) => `${point.x},${point.y}`).join(' '));
+    svg.append(line);
+    coordinates.forEach((point, index) => {
+        const circle = document.createElementNS(namespace, 'circle');
+        circle.setAttribute('cx', point.x); circle.setAttribute('cy', point.y); circle.setAttribute('r', index === coordinates.length - 1 ? 8 : 6);
+        circle.setAttribute('class', index === coordinates.length - 1 ? 'track-point-latest' : 'track-point');
+        svg.append(circle);
+    });
+    byId('detailTrackCount').textContent = `${valid.length} point(s)`;
+    byId('detailTrackLatest').textContent = `Derniere position : ${Number(latest.latitude).toFixed(6)}, ${Number(latest.longitude).toFixed(6)} - ${new Date(latest.created_at).toLocaleString('fr-FR')}`;
 }
 
 document.addEventListener('DOMContentLoaded', async () => {
     byId('loginForm').addEventListener('submit', login);
     byId('logoutButton').addEventListener('click', logout);
+    byId('passwordButton').addEventListener('click', openPasswordDialog);
+    byId('closePasswordButton').addEventListener('click', closePasswordDialog);
+    byId('passwordDialog').addEventListener('cancel', (event) => { event.preventDefault(); closePasswordDialog(); });
+    byId('passwordForm').addEventListener('submit', changePassword);
     ['filterStatus', 'filterStart', 'filterEnd'].forEach((id) => byId(id).addEventListener('change', () => { currentPage = 0; loadData(); }));
     byId('prevPageButton').addEventListener('click', () => { if (currentPage > 0) { currentPage--; loadData(); } });
     byId('nextPageButton').addEventListener('click', () => { if (currentPage + 1 < totalPages) { currentPage++; loadData(); } });
     byId('exportCsvButton').addEventListener('click', () => exportData('csv'));
     byId('exportJsonButton').addEventListener('click', () => exportData('json'));
     byId('deleteAllButton').addEventListener('click', deleteAll);
-    byId('closeDetailButton').addEventListener('click', () => byId('detailDialog').close());
+    byId('runRetentionButton').addEventListener('click', runRetention);
+    byId('loadBaseMapButton').addEventListener('click', () => {
+        const map = byId('detailBaseMap');
+        if (!map.dataset.src) return;
+        map.hidden = false;
+        map.src = map.dataset.src;
+        byId('loadBaseMapButton').textContent = 'Actualiser la carte';
+    });
+    byId('closeDetailButton').addEventListener('click', () => {
+        currentDetailId = null; currentTrackPoints = [];
+        byId('detailBaseMap').hidden = true;
+        byId('detailBaseMap').removeAttribute('src');
+        byId('loadBaseMapButton').textContent = 'Charger la carte OpenStreetMap';
+        byId('detailDialog').close();
+    });
     byId('searchInput').addEventListener('input', () => { clearTimeout(searchTimer); searchTimer = setTimeout(searchVerifications, 250); });
     await loadStorageStatus();
     try {
         const data = await apiFetch('/api/admin/status');
-        if (data.authenticated) { showDashboard(data.admin.username); await Promise.all([loadData(), loadStats()]); } else showLogin();
+        if (data.authenticated) { showDashboard(data.admin.username); await Promise.all([loadData(), loadStats(), loadOperations()]); } else showLogin();
     } catch (error) { showLogin(); }
 });

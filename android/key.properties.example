@@ -1,0 +1,4 @@
+storeFile=../portefeuille-demo-release.jks
+storePassword=CHANGE_ME
+keyAlias=portefeuille-demo
+keyPassword=CHANGE_ME

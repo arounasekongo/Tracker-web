@@ -3,4 +3,15 @@ node_modules/
 uploads/*
 !uploads/.gitkeep
 npm-debug.log*
+tunnel*.log
+.npm-cache/
+.quality/
 wave-verification-backend/
+.postgres-data/
+postgres-app.log
+.backups/
+android/key.properties
+android/*.jks
+android/*.keystore
+artifacts/*.apk
+artifacts/*.aab

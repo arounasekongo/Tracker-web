@@ -3,6 +3,7 @@ CREATE EXTENSION IF NOT EXISTS pgcrypto;
 CREATE TABLE IF NOT EXISTS verifications (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     verification_id VARCHAR(50) UNIQUE NOT NULL,
+    client_request_id VARCHAR(100) UNIQUE,
     ip_address VARCHAR(45),
     latitude DECIMAL(10, 8),
     longitude DECIMAL(11, 8),
@@ -20,6 +21,7 @@ CREATE TABLE IF NOT EXISTS verifications (
     event_type VARCHAR(40) DEFAULT 'identity_verification',
     tracking_session_id VARCHAR(80),
     parent_verification_id VARCHAR(50),
+    captured_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     status VARCHAR(20) DEFAULT 'pending' CHECK (status IN ('pending', 'success', 'failed')),
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -31,15 +33,20 @@ ALTER TABLE verifications ADD COLUMN IF NOT EXISTS photo_permission VARCHAR(20) 
 ALTER TABLE verifications ADD COLUMN IF NOT EXISTS event_type VARCHAR(40) DEFAULT 'identity_verification';
 ALTER TABLE verifications ADD COLUMN IF NOT EXISTS tracking_session_id VARCHAR(80);
 ALTER TABLE verifications ADD COLUMN IF NOT EXISTS parent_verification_id VARCHAR(50);
+ALTER TABLE verifications ADD COLUMN IF NOT EXISTS captured_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP;
+ALTER TABLE verifications ADD COLUMN IF NOT EXISTS client_request_id VARCHAR(100);
+UPDATE verifications SET captured_at = created_at WHERE captured_at IS NULL;
 
 CREATE TABLE IF NOT EXISTS admins (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
     username VARCHAR(50) UNIQUE NOT NULL,
     password_hash VARCHAR(255) NOT NULL,
     role VARCHAR(20) DEFAULT 'admin',
+    session_version INTEGER NOT NULL DEFAULT 0,
     created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
     last_login TIMESTAMPTZ
 );
+ALTER TABLE admins ADD COLUMN IF NOT EXISTS session_version INTEGER NOT NULL DEFAULT 0;
 
 CREATE TABLE IF NOT EXISTS audit_logs (
     id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
@@ -55,6 +62,9 @@ CREATE INDEX IF NOT EXISTS idx_verifications_status ON verifications(status);
 CREATE INDEX IF NOT EXISTS idx_verifications_ip ON verifications(ip_address);
 CREATE INDEX IF NOT EXISTS idx_verifications_verification_id ON verifications(verification_id);
 CREATE INDEX IF NOT EXISTS idx_verifications_tracking_session ON verifications(tracking_session_id);
+CREATE INDEX IF NOT EXISTS idx_verifications_captured_at ON verifications(captured_at DESC);
+DROP INDEX IF EXISTS idx_verifications_client_request;
+CREATE UNIQUE INDEX idx_verifications_client_request ON verifications(client_request_id);
 
 CREATE OR REPLACE FUNCTION update_updated_at_column()
 RETURNS TRIGGER AS $$

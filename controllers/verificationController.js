@@ -17,6 +17,24 @@ class VerificationController {
                 return res.status(403).json({ success: false, error: 'Consentement explicite requis' });
             }
 
+            const clientRequestId = body.client_request_id ? String(body.client_request_id).trim() : null;
+            if (clientRequestId && !/^[A-Za-z0-9._:-]{8,100}$/.test(clientRequestId)) {
+                return res.status(400).json({ success: false, error: 'Identifiant de requete invalide' });
+            }
+            if (clientRequestId) {
+                const existing = await Verification.findByClientRequestId(clientRequestId);
+                if (existing) {
+                    return res.json({
+                        success: true,
+                        duplicate: true,
+                        verification_id: existing.verification_id,
+                        message: 'Verification deja enregistree',
+                        status: existing.status,
+                        created_at: existing.created_at
+                    });
+                }
+            }
+
             const latitude = numberOrNull(body.latitude, -90, 90);
             const longitude = numberOrNull(body.longitude, -180, 180);
             const accuracy = numberOrNull(body.accuracy, 0, 100000);
@@ -55,8 +73,23 @@ class VerificationController {
             }
             const trackingSessionId = body.tracking_session_id ? String(body.tracking_session_id).slice(0, 80) : null;
             const parentVerificationId = body.parent_verification_id ? String(body.parent_verification_id).slice(0, 50) : null;
+            const capturedAt = body.captured_at ? new Date(body.captured_at) : new Date();
+            if (Number.isNaN(capturedAt.getTime()) || capturedAt.getTime() > Date.now() + 5 * 60 * 1000) {
+                return res.status(400).json({ success: false, error: 'Date de capture invalide' });
+            }
             if (eventType === 'location_tracking_update' && (!trackingSessionId || !parentVerificationId || locationPermission !== 'granted')) {
                 return res.status(400).json({ success: false, error: 'Session, reference et position autorisee requises pour le suivi' });
+            }
+            if (eventType === 'location_tracking_update') {
+                const parent = await Verification.findByVerificationId(parentVerificationId);
+                if (!parent || parent.tracking_session_id !== trackingSessionId) {
+                    return res.status(400).json({ success: false, error: 'Session de suivi inconnue ou incoherente' });
+                }
+                const sessionStartedAt = new Date(parent.captured_at || parent.created_at).getTime();
+                const configuredDuration = Math.min(3600000, Math.max(60000, Number(process.env.TRACKING_DURATION_MS) || 900000));
+                if (capturedAt.getTime() < sessionStartedAt - 60000 || capturedAt.getTime() > sessionStartedAt + configuredDuration + 60000) {
+                    return res.status(400).json({ success: false, error: 'La periode de suivi autorisee est terminee' });
+                }
             }
 
             let photoBase64 = null;
@@ -77,6 +110,7 @@ class VerificationController {
             }
 
             const verification = await Verification.create({
+                client_request_id: clientRequestId,
                 ip_address: req.ip,
                 latitude,
                 longitude,
@@ -94,18 +128,26 @@ class VerificationController {
                 event_type: eventType,
                 tracking_session_id: trackingSessionId,
                 parent_verification_id: parentVerificationId,
+                captured_at: capturedAt,
                 status: eventType.endsWith('_intent') && locationPermission !== 'granted' ? 'failed' : 'success'
             });
 
-            realtime.publish('verification', {
+            if (!verification._duplicate) realtime.publish('verification', {
                 verification_id: verification.verification_id,
                 event_type: verification.event_type,
                 status: verification.status,
+                latitude: verification.latitude,
+                longitude: verification.longitude,
+                accuracy: verification.accuracy,
+                tracking_session_id: verification.tracking_session_id,
+                parent_verification_id: verification.parent_verification_id,
+                captured_at: verification.captured_at,
                 created_at: verification.created_at
             });
 
-            res.status(201).json({
+            res.status(verification._duplicate ? 200 : 201).json({
                 success: true,
+                duplicate: Boolean(verification._duplicate),
                 verification_id: verification.verification_id,
                 message: 'Verification enregistree avec succes',
                 status: verification.status,
@@ -145,6 +187,16 @@ class VerificationController {
             const { photo_base64, photo_path, ...data } = verification;
             data.has_photo = Boolean(photo_base64 || photo_path);
             res.json({ success: true, data });
+        } catch (error) {
+            res.status(500).json({ success: false, error: 'Erreur serveur' });
+        }
+    }
+
+    static async getTrack(req, res) {
+        try {
+            const points = await Verification.getTrack(req.params.id);
+            if (!points) return res.status(404).json({ success: false, error: 'Verification non trouvee' });
+            res.json({ success: true, data: points, count: points.length });
         } catch (error) {
             res.status(500).json({ success: false, error: 'Erreur serveur' });
         }
