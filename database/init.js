@@ -2,7 +2,7 @@ process.env.DATABASE_FALLBACK = 'disabled';
 const pool = require('./db');
 const fs = require('fs');
 const path = require('path');
-const bcrypt = require('bcrypt');
+const { provisionAdmin } = require('./adminProvisioning');
 
 async function initDatabase() {
     try {
@@ -13,13 +13,15 @@ async function initDatabase() {
         if (!password || (process.env.NODE_ENV === 'production' && password.length < 12)) {
             throw new Error('ADMIN_PASSWORD est requis et doit contenir au moins 12 caracteres en production');
         }
-        const passwordHash = await bcrypt.hash(password, 12);
-        await pool.query(
-            `INSERT INTO admins (username, password_hash) VALUES ($1, $2)
-             ON CONFLICT (username) DO UPDATE SET password_hash = EXCLUDED.password_hash`,
-            [username, passwordHash]
-        );
-        console.log('Base de donnees initialisee');
+        const result = await provisionAdmin(pool, {
+            username,
+            password,
+            resetPassword: process.env.ADMIN_RESET_PASSWORD === 'true'
+        });
+        const message = result.action === 'created' ? 'compte administrateur cree' :
+            result.action === 'reset' ? 'mot de passe administrateur reinitialise' :
+                'mot de passe administrateur existant conserve';
+        console.log(`Base de donnees initialisee (${message})`);
     } catch (error) {
         console.error('Erreur initialisation:', error);
         process.exitCode = 1;

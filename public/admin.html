@@ -25,7 +25,7 @@
         <nav class="navbar navbar-dark bg-dark">
             <div class="container-fluid">
                 <span class="navbar-brand">Portefeuille Demo</span>
-                <div><span class="storage-status me-3" id="storageStatus">Stockage...</span><span class="live-status me-3" id="realtimeStatus">Temps reel</span><span class="text-light me-3" id="adminUser">Admin</span><button class="btn btn-outline-light btn-sm" id="logoutButton" type="button">Deconnexion</button></div>
+                <div><span class="storage-status me-3" id="storageStatus" role="status" aria-live="polite">Stockage...</span><span class="live-status me-3" id="realtimeStatus" role="status" aria-live="polite">Temps reel</span><span class="text-light me-3" id="adminUser">Admin</span><button class="btn btn-outline-light btn-sm" id="passwordButton" type="button">Mot de passe</button><button class="btn btn-outline-light btn-sm" id="logoutButton" type="button">Deconnexion</button></div>
             </div>
         </nav>
         <main class="container-fluid py-4">
@@ -35,16 +35,20 @@
                 <div class="col-6 col-lg-3"><div class="stat-card"><div class="stat-number" id="statLocation">0</div><div class="stat-label">Avec localisation</div></div></div>
                 <div class="col-6 col-lg-3"><div class="stat-card"><div class="stat-number" id="statPhoto">0</div><div class="stat-label">Avec photo</div></div></div>
             </section>
+            <section class="operations-panel" aria-label="Etat operationnel">
+                <div><strong>Exploitation</strong><span id="operationsSummary">Chargement...</span><div><button class="btn btn-sm btn-outline-secondary" id="runRetentionButton" type="button">Purger les donnees expirees</button></div></div>
+                <details><summary>Activite administrative recente</summary><ol id="auditList"><li>Chargement...</li></ol></details>
+            </section>
             <section class="toolbar row g-2 mb-3" aria-label="Filtres et actions">
                 <div class="col-md-3"><select id="filterStatus" class="form-select" aria-label="Filtrer par statut"><option value="">Tous les statuts</option><option value="success">Succes</option><option value="failed">Echec</option><option value="pending">En attente</option></select></div>
                 <div class="col-md-2"><input type="date" id="filterStart" class="form-control" aria-label="Date de debut"></div>
                 <div class="col-md-2"><input type="date" id="filterEnd" class="form-control" aria-label="Date de fin"></div>
                 <div class="col-md-5 d-flex gap-2"><button class="btn btn-success" id="exportCsvButton" type="button">CSV</button><button class="btn btn-info" id="exportJsonButton" type="button">JSON</button><button class="btn btn-danger ms-auto" id="deleteAllButton" type="button">Tout supprimer</button></div>
-                <div class="col-12"><input type="search" id="searchInput" class="form-control" placeholder="Rechercher par ID, IP ou navigateur"></div>
+                <div class="col-12"><input type="search" id="searchInput" class="form-control" aria-label="Rechercher une verification" placeholder="Rechercher par ID, IP ou navigateur"></div>
             </section>
             <section class="table-responsive bg-white border" aria-label="Verifications">
                 <table class="table table-hover align-middle mb-0">
-                    <thead><tr><th>ID</th><th>Evenement</th><th>Date</th><th>IP</th><th>Localisation</th><th>Navigateur</th><th>Photo</th><th>Statut</th><th>Actions</th></tr></thead>
+                    <thead><tr><th scope="col">ID</th><th scope="col">Evenement</th><th scope="col">Date</th><th scope="col">IP</th><th scope="col">Localisation</th><th scope="col">Navigateur</th><th scope="col">Photo</th><th scope="col">Statut</th><th scope="col">Actions</th></tr></thead>
                     <tbody id="verificationsTable"><tr><td colspan="9" class="text-center text-muted">Chargement...</td></tr></tbody>
                 </table>
                 <div class="d-flex justify-content-between align-items-center p-3 border-top">
@@ -74,7 +78,32 @@
                 <h3 class="h6">Photo collectee</h3>
                 <img id="detailPhoto" alt="Photo collectee pour cette verification">
             </div>
+            <section id="detailTrackSection" class="track-section" hidden aria-labelledby="detailTrackTitle">
+                <div class="detail-head"><h3 id="detailTrackTitle" class="h6">Trajet GPS en temps reel</h3><span id="detailTrackCount" class="text-muted"></span></div>
+                <div class="map-actions">
+                    <button id="loadBaseMapButton" class="btn btn-sm btn-outline-secondary" type="button">Charger la carte OpenStreetMap</button>
+                    <span class="text-muted">La carte externe affiche la derniere position ; la trace complete reste visible ci-dessous.</span>
+                </div>
+                <iframe id="detailBaseMap" class="base-map" title="Carte OpenStreetMap de la derniere position" loading="lazy" referrerpolicy="no-referrer" hidden></iframe>
+                <svg id="detailTrackMap" class="track-map" viewBox="0 0 600 300" role="img" aria-label="Apercu du trajet GPS"></svg>
+                <p id="detailTrackLatest" class="text-muted"></p>
+            </section>
         </div>
+    </dialog>
+    <dialog id="passwordDialog" aria-labelledby="passwordTitle">
+        <form id="passwordForm" class="detail-modal">
+            <div class="detail-head"><h2 id="passwordTitle" class="h4 mb-0">Modifier le mot de passe</h2><button id="closePasswordButton" class="btn-close" type="button" aria-label="Fermer"></button></div>
+            <p class="text-muted">La modification invalide automatiquement les autres sessions administrateur.</p>
+            <label class="form-label" for="currentPassword">Mot de passe actuel</label>
+            <input class="form-control mb-3" type="password" id="currentPassword" autocomplete="current-password" required maxlength="200">
+            <label class="form-label" for="newPassword">Nouveau mot de passe</label>
+            <input class="form-control mb-3" type="password" id="newPassword" autocomplete="new-password" required minlength="12" maxlength="200">
+            <label class="form-label" for="confirmPassword">Confirmer le nouveau mot de passe</label>
+            <input class="form-control mb-3" type="password" id="confirmPassword" autocomplete="new-password" required minlength="12" maxlength="200">
+            <p class="text-muted">12 caracteres minimum avec majuscule, minuscule, chiffre et symbole.</p>
+            <div id="passwordError" class="alert alert-danger" role="alert" hidden></div>
+            <button class="btn btn-primary w-100" type="submit">Enregistrer et invalider les autres sessions</button>
+        </form>
     </dialog>
     <script src="/admin.js" defer></script>
 </body>

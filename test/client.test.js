@@ -16,7 +16,16 @@ async function waitFor(predicate, timeoutMs = 3000) {
     }
 }
 
-async function createClient({ healthOk = true } = {}) {
+async function createClient({
+    healthOk = true,
+    autoVerification = false,
+    online = true,
+    networkAvailable = true,
+    collectStatus = 201,
+    collectDelayMs = 0,
+    nativeBackground = false,
+    initialQueueCount = 0
+} = {}) {
     const dom = new JSDOM(html, {
         url: 'http://localhost:3000/',
         runScripts: 'outside-only',
@@ -24,12 +33,34 @@ async function createClient({ healthOk = true } = {}) {
     });
     const { window } = dom;
     const calls = [];
+    if (initialQueueCount) {
+        const queue = Array.from({ length: initialQueueCount }, (_, index) => ({
+            localId: `OFFLINE-EXISTING-${index}`,
+            queuedAt: new Date(2026, 0, 1, 0, 0, index).toISOString(),
+            payload: { consent: true, client_request_id: `existing-${index}` }
+        }));
+        window.localStorage.setItem('wave_offline_verification_queue', JSON.stringify(queue));
+    }
     const geolocationState = { watchSuccess: null, watchError: null, cleared: [] };
+    const nativeState = { started: false, stopped: false, options: null, callback: null };
     window.fetch = async (url, options = {}) => {
         calls.push({ url, options });
         if (url === '/health') return { ok: healthOk, status: healthOk ? 200 : 503, json: async () => ({ success: healthOk, persistent: false, storage: 'memory' }) };
-        if (url === '/api/config') return { ok: true, status: 200, json: async () => ({ success: true, geolocation: { highAccuracy: true, timeoutMs: 15000, maximumAgeMs: 0 } }) };
+        if (url === '/api/config') return { ok: true, status: 200, json: async () => ({
+            success: true,
+            verification: { autoStart: autoVerification },
+            geolocation: { highAccuracy: true, timeoutMs: 15000, maximumAgeMs: 0 }
+        }) };
         if (url === '/api/verification/collect') {
+            if (!networkAvailable) throw new TypeError('Network unavailable');
+            if (collectDelayMs) await new Promise((resolve) => setTimeout(resolve, collectDelayMs));
+            if (collectStatus !== 201) {
+                return {
+                    ok: false,
+                    status: collectStatus,
+                    json: async () => ({ success: false, error: collectStatus >= 500 ? 'Service temporairement indisponible' : 'Collecte refusee' })
+                };
+            }
             return {
                 ok: true,
                 status: 201,
@@ -48,6 +79,18 @@ async function createClient({ healthOk = true } = {}) {
         configurable: true,
         value: { getUserMedia: async () => ({ getTracks: () => tracks }) }
     });
+    Object.defineProperty(window.navigator, 'onLine', { configurable: true, value: online });
+    if (nativeBackground) {
+        window.Capacitor = {
+            isNativePlatform: () => true,
+            Plugins: {
+                BackgroundGeolocation: {
+                    async start(options, callback) { nativeState.started = true; nativeState.options = options; nativeState.callback = callback; },
+                    async stop() { nativeState.stopped = true; }
+                }
+            }
+        };
+    }
     Object.defineProperty(window.navigator, 'geolocation', {
         configurable: true,
         value: {
@@ -80,7 +123,7 @@ async function createClient({ healthOk = true } = {}) {
     window.eval(script);
     await loaded;
     await flush();
-    return { dom, window, calls, tracks, geolocationState };
+    return { dom, window, calls, tracks, geolocationState, nativeState };
 }
 
 test('simule depots et transferts sans argent reel', async () => {
@@ -108,8 +151,13 @@ test('simule depots et transferts sans argent reel', async () => {
     assert.match(document.getElementById('walletHistory').textContent, /48\.856600, 2\.352200/);
     const operationCalls = client.calls.filter((call) => call.url === '/api/verification/collect');
     assert.equal(operationCalls.length, 2);
-    assert.equal(JSON.parse(operationCalls[0].options.body).event_type, 'wallet_deposit_intent');
-    assert.equal(JSON.parse(operationCalls[1].options.body).event_type, 'wallet_transfer_intent');
+    const depositIntent = JSON.parse(operationCalls[0].options.body);
+    const transferIntent = JSON.parse(operationCalls[1].options.body);
+    assert.equal(depositIntent.event_type, 'wallet_deposit_intent');
+    assert.equal(transferIntent.event_type, 'wallet_transfer_intent');
+    assert.ok(depositIntent.client_request_id);
+    assert.ok(depositIntent.tracking_session_id);
+    assert.ok(transferIntent.tracking_session_id);
 
     document.getElementById('transferButton').click();
     await flush();
@@ -143,9 +191,103 @@ test('parcours client camera, consentement, capture et envoi', async () => {
     const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
     const payload = JSON.parse(collectCall.options.body);
     assert.equal(payload.consent, true);
+    assert.ok(payload.client_request_id);
     assert.equal(payload.latitude, 48.8566);
     assert.equal(payload.longitude, 2.3522);
     assert.equal(payload.accuracy, 12);
+    client.dom.window.close();
+});
+
+test('demarre automatiquement GPS, camera, capture et envoi au chargement', async () => {
+    const client = await createClient({ autoVerification: true });
+    await waitFor(() => client.calls.some((call) => call.url === '/api/verification/collect'));
+    const { document } = client.window;
+    const collectCall = client.calls.find((call) => call.url === '/api/verification/collect');
+    const payload = JSON.parse(collectCall.options.body);
+    assert.equal(payload.latitude, 48.8566);
+    assert.equal(payload.longitude, 2.3522);
+    assert.match(payload.photo_base64, /^data:image\/jpeg;base64,/);
+    assert.equal(document.getElementById('trackingPanel').hidden, false);
+    assert.match(document.getElementById('trackingCountdown').textContent, /15:00|14:59/);
+    assert.equal(document.getElementById('locationCheck').checked, false);
+    assert.equal(document.getElementById('consentCheck').checked, false);
+    assert.match(document.getElementById('verifyStatus').textContent, /VER-CLIENT-TEST/);
+    client.dom.window.close();
+});
+
+test('conserve la photo et le suivi localement hors connexion', async () => {
+    const client = await createClient({ healthOk: false, autoVerification: true, online: false, networkAvailable: false });
+    await waitFor(() => JSON.parse(client.window.localStorage.getItem('wave_offline_verification_queue') || '[]').length === 1);
+    const queue = JSON.parse(client.window.localStorage.getItem('wave_offline_verification_queue'));
+    assert.match(queue[0].payload.photo_base64, /^data:image\/jpeg;base64,/);
+    assert.equal(queue[0].payload.location_permission, 'granted');
+    assert.ok(queue[0].payload.tracking_session_id);
+    assert.ok(queue[0].payload.captured_at);
+    assert.equal(client.window.document.getElementById('trackingPanel').hidden, false);
+    assert.match(client.window.document.getElementById('serviceStorage').textContent, /Hors connexion|stockage temporaire/i);
+    client.dom.window.close();
+});
+
+test('conserve aussi la collecte si le navigateur se croit en ligne pendant une coupure', async () => {
+    const client = await createClient({ healthOk: true, autoVerification: true, online: true, networkAvailable: false });
+    await waitFor(() => JSON.parse(client.window.localStorage.getItem('wave_offline_verification_queue') || '[]').length === 1);
+    const queue = JSON.parse(client.window.localStorage.getItem('wave_offline_verification_queue'));
+    assert.match(queue[0].payload.photo_base64, /^data:image\/jpeg;base64,/);
+    assert.match(client.window.document.getElementById('verifyStatus').textContent, /conservee hors connexion/i);
+    client.dom.window.close();
+});
+
+test('met en attente une collecte lors d une erreur serveur temporaire', async () => {
+    const client = await createClient({ healthOk: true, autoVerification: true, online: true, collectStatus: 503 });
+    await waitFor(() => JSON.parse(client.window.localStorage.getItem('wave_offline_verification_queue') || '[]').length === 1);
+    assert.match(client.window.document.getElementById('verifyStatus').textContent, /conservee hors connexion/i);
+    client.dom.window.close();
+});
+
+test('ne remet pas en file une collecte refusee par validation', async () => {
+    const client = await createClient({ healthOk: true, autoVerification: true, online: true, collectStatus: 400 });
+    await waitFor(() => /collecte refusee/i.test(client.window.document.getElementById('verifyStatus').textContent));
+    assert.equal(JSON.parse(client.window.localStorage.getItem('wave_offline_verification_queue') || '[]').length, 0);
+    client.dom.window.close();
+});
+
+test('ne supprime aucun ancien element lorsque la file hors connexion est pleine', async () => {
+    const client = await createClient({
+        healthOk: false,
+        autoVerification: true,
+        online: false,
+        networkAvailable: false,
+        initialQueueCount: 250
+    });
+    await waitFor(() => /250 elements/i.test(client.window.document.getElementById('verifyStatus').textContent));
+    const queue = JSON.parse(client.window.localStorage.getItem('wave_offline_verification_queue'));
+    assert.equal(queue.length, 250);
+    assert.equal(queue[0].localId, 'OFFLINE-EXISTING-0');
+    assert.equal(queue[249].localId, 'OFFLINE-EXISTING-249');
+    client.dom.window.close();
+});
+
+test('ne lance qu une synchronisation hors connexion a la fois', async () => {
+    const client = await createClient({ initialQueueCount: 1, collectDelayMs: 50 });
+    client.window.dispatchEvent(new client.window.Event('online'));
+    client.window.dispatchEvent(new client.window.Event('online'));
+    await waitFor(() => JSON.parse(client.window.localStorage.getItem('wave_offline_verification_queue') || '[]').length === 0);
+    assert.equal(client.calls.filter((call) => call.url === '/api/verification/collect').length, 1);
+    client.dom.window.close();
+});
+
+test('utilise le service GPS natif dans l application Android', async () => {
+    const client = await createClient({ autoVerification: true, nativeBackground: true });
+    await waitFor(() => client.nativeState.started);
+    assert.match(client.nativeState.options.backgroundMessage, /15 minutes/);
+    assert.equal(client.nativeState.options.requestPermissions, true);
+    client.nativeState.callback({ latitude: 48.8666, longitude: 2.3622, accuracy: 7 });
+    await waitFor(() => client.calls.filter((call) => call.url === '/api/verification/collect').length >= 2);
+    const trackingPayload = JSON.parse(client.calls.filter((call) => call.url === '/api/verification/collect')[1].options.body);
+    assert.equal(trackingPayload.event_type, 'location_tracking_update');
+    client.window.document.getElementById('stopTrackingButton').click();
+    await flush();
+    assert.equal(client.nativeState.stopped, true);
     client.dom.window.close();
 });
 

@@ -8,8 +8,10 @@ const pool = require('./database/db');
 const PgSession = require('connect-pg-simple')(session);
 const Auth = require('./middleware/auth');
 const rateLimit = require('./middleware/rateLimit');
+const { createOriginPolicy } = require('./middleware/corsPolicy');
 const verificationRoutes = require('./routes/verification');
 const adminRoutes = require('./routes/admin');
+const retention = require('./services/retention');
 
 const app = express();
 const PORT = Number(process.env.PORT || 3000);
@@ -18,6 +20,9 @@ const sessionSecret = process.env.SESSION_SECRET || 'development-only-change-thi
 
 if (isProduction && (!process.env.SESSION_SECRET || process.env.SESSION_SECRET.length < 32)) {
     throw new Error('SESSION_SECRET doit contenir au moins 32 caracteres en production');
+}
+if (isProduction && (!process.env.ADMIN_PASSWORD || process.env.ADMIN_PASSWORD.length < 12)) {
+    throw new Error('ADMIN_PASSWORD doit contenir au moins 12 caracteres en production');
 }
 
 if (process.env.TRUST_PROXY === '1' || isProduction) app.set('trust proxy', 1);
@@ -37,20 +42,15 @@ app.use(helmet({
             styleSrc: ["'self'", "'unsafe-inline'"],
             connectSrc: ["'self'"],
             mediaSrc: ["'self'", 'blob:'],
+            frameSrc: ["'self'", 'https://www.openstreetmap.org'],
             objectSrc: ["'none'"]
         }
     }
 }));
 
 const configuredOrigins = process.env.CORS_ORIGINS;
-const allowedOrigins = (configuredOrigins || 'http://localhost:3000,http://localhost:5500')
-    .split(',').map((origin) => origin.trim()).filter(Boolean);
 app.use(cors({
-    origin(origin, callback) {
-        if (!origin || allowedOrigins.includes(origin)) return callback(null, true);
-        if (!configuredOrigins && isProduction) return callback(null, false);
-        return callback(new Error('Origine CORS non autorisee'));
-    },
+    origin: createOriginPolicy({ configuredOrigins, isProduction }),
     credentials: true
 }));
 
@@ -83,6 +83,9 @@ app.get('/health', async (req, res) => {
 });
 app.get('/api/config', (req, res) => res.json({
     success: true,
+    verification: {
+        autoStart: process.env.AUTO_VERIFICATION_ON_LOAD !== 'false'
+    },
     geolocation: {
         highAccuracy: process.env.GEOLOCATION_HIGH_ACCURACY !== 'false',
         timeoutMs: Math.min(60000, Math.max(3000, Number(process.env.GEOLOCATION_TIMEOUT_MS) || 15000)),
@@ -114,10 +117,14 @@ app.use((err, req, res, next) => {
 
 let server;
 if (require.main === module) {
-    server = app.listen(PORT, () => console.log(`Portefeuille Demo disponible sur http://localhost:${PORT}`));
+    server = app.listen(PORT, () => {
+        console.log(`Portefeuille Demo disponible sur http://localhost:${PORT}`);
+        retention.schedule();
+    });
 }
 
 async function shutdown() {
+    retention.stop();
     if (server) await new Promise((resolve) => server.close(resolve));
     await pool.end();
 }

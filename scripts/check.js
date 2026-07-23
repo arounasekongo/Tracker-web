@@ -3,7 +3,9 @@ const path = require('path');
 const { execFileSync } = require('child_process');
 
 const root = path.resolve(__dirname, '..');
-const required = ['server.js', 'public/index.html', 'public/client.js', 'public/admin.html', 'public/admin.js', 'database/init.sql'];
+const required = ['server.js', 'public/index.html', 'public/client.js', 'public/admin.html', 'public/admin.js',
+    'public/manifest.webmanifest', 'public/sw.js', 'database/init.sql', 'capacitor.config.js',
+    'android/app/src/main/AndroidManifest.xml'];
 
 for (const relativePath of required) {
     if (!fs.existsSync(path.join(root, relativePath))) throw new Error(`Fichier requis absent: ${relativePath}`);

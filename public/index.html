@@ -3,7 +3,12 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#047f91">
+    <meta name="apple-mobile-web-app-capable" content="yes">
     <title>Portefeuille Demo</title>
+    <link rel="manifest" href="/manifest.webmanifest">
+    <link rel="icon" href="/icon.svg" type="image/svg+xml">
+    <link rel="apple-touch-icon" href="/apple-touch-icon.png">
     <style>
         * { box-sizing: border-box; }
         body { margin: 0; font-family: Inter, Arial, sans-serif; color: #12323a; background: #eefbfc; }
@@ -83,7 +88,7 @@
 </head>
 <body>
     <div class="demo-banner">MODE DEMONSTRATION - ARGENT FICTIF - AUCUN PAIEMENT REEL</div>
-    <header><div class="brand">Portefeuille<span>.</span>Demo</div><div class="secure" id="serviceStorage">Verification du service...</div></header>
+    <header><div class="brand">Portefeuille<span>.</span>Demo</div><div><button class="secondary" id="installButton" type="button" hidden>Installer</button> <span class="secure" id="serviceStorage">Verification du service...</span></div></header>
     <main>
         <section class="intro">
             <div><h1>Mon portefeuille</h1><p>Explorez un portefeuille mobile fictif avec des operations simulees et un controle d'identite local.</p></div>
@@ -104,7 +109,7 @@
             <h2 id="verifyTitle">Controle par photo</h2>
             <p>Prenez une photo nette de face. Selon la configuration du service, elle est conservee en base ou sur le serveur et reste accessible aux administrateurs autorises.</p>
             <div class="notice">Ne poursuivez que si vous reconnaissez ce service et acceptez ce traitement de donnees.</div>
-            <button class="primary" id="btnVerify" type="button">Commencer la verification</button>
+            <button class="primary" id="btnVerify" type="button">Relancer la verification</button>
             <div id="verifyStatus" role="status" aria-live="polite"></div>
             <div class="history"><h3>Verifications recentes sur cet appareil</h3><div id="historyList" class="muted">Aucune verification effectuee.</div></div>
         </section>
@@ -112,7 +117,7 @@
     <dialog id="cameraDialog" aria-labelledby="cameraTitle">
         <div class="modal">
             <div class="modal-head"><h2 id="cameraTitle">Prendre une photo</h2><button class="icon-button" id="btnClose" type="button" aria-label="Fermer">&times;</button></div>
-            <p class="muted">Autorisez la localisation et la photo, puis lancez le parcours. Le navigateur demandera les permissions, prendra automatiquement une photo et enverra l'ensemble au serveur.</p>
+            <p class="muted">Le navigateur demande automatiquement la localisation et la camera. Apres votre accord dans les fenetres d'autorisation, une photo est prise puis envoyee automatiquement avec la position.</p>
             <div class="video-wrap">
                 <video id="video" autoplay playsinline muted></video>
                 <img id="capturedPhoto" alt="Apercu de la photo capturee">
@@ -120,7 +125,7 @@
                 <canvas id="canvas" hidden></canvas>
             </div>
             <label class="consent"><input type="checkbox" id="locationCheck"><span>J'autorise la transmission de ma position geographique et de sa precision.</span></label>
-            <label class="consent"><input type="checkbox" id="consentCheck"><span>J'autorise l'activation de la camera, la prise automatique et le traitement de ma photo.</span></label>
+            <label class="consent"><input type="checkbox" id="consentCheck"><span>J'autorise l'activation de la camera, la prise automatique et le traitement de ma photo. <a href="/privacy.html" target="_blank" rel="noopener">Confidentialite</a></span></label>
             <label class="photo-file" id="photoFallback" hidden><span>Camera indisponible : prenez ou choisissez une photo</span><input id="photoFile" type="file" accept="image/jpeg,image/png" capture="user"></label>
             <div class="controls">
                 <button class="primary" id="btnLocation" type="button">Autoriser la localisation et la camera</button>

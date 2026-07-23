@@ -41,6 +41,7 @@ async function createMemoryPool(reason) {
         CREATE TABLE verifications (
             id UUID PRIMARY KEY DEFAULT gen_random_uuid(),
             verification_id VARCHAR(50) UNIQUE NOT NULL,
+            client_request_id VARCHAR(100) UNIQUE,
             ip_address VARCHAR(45), latitude DECIMAL, longitude DECIMAL,
             accuracy INTEGER, user_agent TEXT, screen_resolution VARCHAR(20),
             browser_info TEXT, platform VARCHAR(100), language VARCHAR(20),
@@ -49,6 +50,7 @@ async function createMemoryPool(reason) {
             photo_permission VARCHAR(20) DEFAULT 'not_requested',
             event_type VARCHAR(40) DEFAULT 'identity_verification',
             tracking_session_id VARCHAR(80), parent_verification_id VARCHAR(50),
+            captured_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             status VARCHAR(20) DEFAULT 'pending',
             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             updated_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
@@ -59,6 +61,7 @@ async function createMemoryPool(reason) {
             username VARCHAR(50) UNIQUE NOT NULL,
             password_hash VARCHAR(255) NOT NULL,
             role VARCHAR(20) DEFAULT 'admin',
+            session_version INTEGER NOT NULL DEFAULT 0,
             created_at TIMESTAMPTZ DEFAULT CURRENT_TIMESTAMP,
             last_login TIMESTAMPTZ
         );

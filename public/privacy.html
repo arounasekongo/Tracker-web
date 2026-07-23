@@ -1,0 +1,33 @@
+<!doctype html>
+<html lang="fr">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <meta name="theme-color" content="#047f91">
+    <title>Confidentialite - Portefeuille Demo</title>
+    <style>
+        body { margin: 0; font-family: Inter, Arial, sans-serif; color: #17343c; background: #eefbfc; line-height: 1.6; }
+        main { width: min(820px, calc(100% - 32px)); margin: 32px auto; padding: clamp(22px, 5vw, 48px); background: #fff; border-top: 7px solid #ffd84d; border-radius: 8px; box-shadow: 0 18px 50px rgba(3,71,82,.12); }
+        h1, h2 { color: #047f91; line-height: 1.2; } h2 { margin-top: 30px; font-size: 20px; }
+        a { color: #047f91; font-weight: 700; } .notice { padding: 14px 16px; background: #fff7d6; border-left: 5px solid #e0ad00; }
+    </style>
+</head>
+<body>
+<main>
+    <p><a href="/">&larr; Retour a l'application</a></p>
+    <h1>Confidentialite et autorisations</h1>
+    <p class="notice"><strong>Portefeuille Demo est un prototype :</strong> aucun depot, transfert ou solde affiche ne represente de l'argent reel.</p>
+    <h2>Donnees traitees</h2>
+    <p>Avec votre accord et les autorisations de l'appareil, l'application peut traiter une photo, votre position GPS et sa precision, les points du trajet pendant 15 minutes, l'adresse IP et des informations techniques du navigateur.</p>
+    <h2>Pourquoi ces donnees sont utilisees</h2>
+    <p>Elles servent uniquement a demontrer une verification d'identite, une operation fictive localisee et le suivi temporaire demande. La camera et la localisation restent controlees par les autorisations natives du navigateur ou d'Android.</p>
+    <h2>Duree et stockage</h2>
+    <p>Les donnees serveur sont conservees pendant la duree configuree par l'exploitant, 90 jours par defaut, puis supprimees automatiquement. En mode hors connexion, les elements en attente restent dans IndexedDB sur l'appareil jusqu'a leur synchronisation ou la suppression des donnees du site.</p>
+    <h2>Vos controles</h2>
+    <p>Vous pouvez refuser la camera ou la localisation, arreter le suivi avec le bouton visible, retirer les autorisations dans les reglages de l'appareil et demander a l'administrateur du service la suppression d'une verification.</p>
+    <h2>Securite</h2>
+    <p>Les photos ne sont pas exposees publiquement. Leur consultation, les exports et les suppressions exigent une session administrateur et les actions sensibles sont journalisees.</p>
+    <p>Dans l'administration, la carte OpenStreetMap n'est chargee qu'apres une action volontaire de l'administrateur. La derniere position et l'emprise geographique visible sont alors transmises a OpenStreetMap pour afficher le fond de carte.</p>
+</main>
+</body>
+</html>

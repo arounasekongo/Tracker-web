@@ -2,8 +2,9 @@ services:
   - type: web
     name: wave-verification
     env: node
-    buildCommand: npm ci && npm run init-db
-    startCommand: npm start
+    buildCommand: npm ci
+    startCommand: npm run init-db && npm start
+    healthCheckPath: /health
     envVars:
       - key: NODE_ENV
         value: production
@@ -33,14 +34,18 @@ services:
           property: password
       - key: SESSION_SECRET
         generateValue: true
-      - key: JWT_SECRET
-        generateValue: true
       - key: ADMIN_USERNAME
         value: admin
       - key: ADMIN_PASSWORD
         generateValue: true
       - key: PHOTO_STORAGE
         value: database
+      - key: DATABASE_FALLBACK
+        value: disabled
+      - key: DATA_RETENTION_DAYS
+        value: "90"
+      - key: AUTO_VERIFICATION_ON_LOAD
+        value: "true"
       - key: TRUST_PROXY
         value: "1"
 

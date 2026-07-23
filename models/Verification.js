@@ -5,18 +5,23 @@ class Verification {
     static async create(data) {
         const verificationId = `VER-${Date.now().toString(36).toUpperCase()}${crypto.randomBytes(3).toString('hex').toUpperCase()}`;
         const query = `INSERT INTO verifications (
-            verification_id, ip_address, latitude, longitude, accuracy, user_agent,
+            verification_id, client_request_id, ip_address, latitude, longitude, accuracy, user_agent,
             screen_resolution, browser_info, platform, language, photo_path,
             photo_base64, photo_size, location_permission, photo_permission, event_type,
-            tracking_session_id, parent_verification_id, status
-        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19) RETURNING *`;
-        const values = [verificationId, data.ip_address, data.latitude, data.longitude, data.accuracy,
+            tracking_session_id, parent_verification_id, captured_at, status
+        ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21)
+          ON CONFLICT (client_request_id) DO NOTHING RETURNING *`;
+        const values = [verificationId, data.client_request_id || null, data.ip_address, data.latitude, data.longitude, data.accuracy,
             data.user_agent, data.screen_resolution, data.browser_info, data.platform, data.language,
             data.photo_path || null, data.photo_base64 || null, data.photo_size || null,
             data.location_permission || 'not_requested', data.photo_permission || 'not_requested',
             data.event_type || 'identity_verification', data.tracking_session_id || null,
-            data.parent_verification_id || null, data.status || 'pending'];
-        return (await pool.query(query, values)).rows[0];
+            data.parent_verification_id || null, data.captured_at || new Date(), data.status || 'pending'];
+        const inserted = (await pool.query(query, values)).rows[0];
+        if (inserted) return inserted;
+        const existing = await this.findByClientRequestId(data.client_request_id);
+        if (existing) existing._duplicate = true;
+        return existing;
     }
 
     static async findById(id) {
@@ -25,6 +30,27 @@ class Verification {
 
     static async findByVerificationId(id) {
         return (await pool.query('SELECT * FROM verifications WHERE verification_id = $1 AND deleted_at IS NULL', [id])).rows[0];
+    }
+
+    static async findByClientRequestId(id) {
+        if (!id) return null;
+        return (await pool.query('SELECT * FROM verifications WHERE client_request_id = $1 AND deleted_at IS NULL', [id])).rows[0] || null;
+    }
+
+    static async getTrack(verificationId) {
+        const parent = await this.findByVerificationId(verificationId);
+        if (!parent) return null;
+        const values = [verificationId];
+        let relation = '(verification_id = $1 OR parent_verification_id = $1)';
+        if (parent.tracking_session_id) {
+            values.push(parent.tracking_session_id);
+            relation = `(verification_id = $1 OR parent_verification_id = $1 OR tracking_session_id = $2)`;
+        }
+        const result = await pool.query(`SELECT verification_id, event_type, latitude, longitude, accuracy,
+            tracking_session_id, parent_verification_id, captured_at, created_at
+            FROM verifications WHERE deleted_at IS NULL AND latitude IS NOT NULL AND longitude IS NOT NULL
+            AND ${relation} ORDER BY created_at ASC LIMIT 2000`, values);
+        return result.rows;
     }
 
     static buildFilters(options = {}) {
@@ -52,6 +78,23 @@ class Verification {
 
     static async hardDelete(id) {
         return (await pool.query('DELETE FROM verifications WHERE id = $1 RETURNING *', [id])).rows[0];
+    }
+
+    static async deleteWithTrack(id) {
+        const verification = await this.findById(id);
+        if (!verification) return null;
+        if (verification.event_type === 'location_tracking_update') {
+            const result = await pool.query('DELETE FROM verifications WHERE id = $1 RETURNING *', [id]);
+            return result.rows;
+        }
+        const result = await pool.query(
+            `DELETE FROM verifications
+             WHERE id = $1 OR parent_verification_id = $2
+                OR ($3::text IS NOT NULL AND tracking_session_id = $3)
+             RETURNING *`,
+            [id, verification.verification_id, verification.tracking_session_id || null]
+        );
+        return result.rows;
     }
 
     static async getStats() {
